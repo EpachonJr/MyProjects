@@ -16,6 +16,7 @@ import {
   Upload,
   Radio,
   Sparkles,
+  Activity,
 } from 'lucide-react';
 import {
   INITIAL_HOLDINGS,
@@ -48,6 +49,7 @@ import {
   formatPct,
 } from './utils/calculations';
 import { RentabilityTab } from './components/RentabilityTab';
+import { DayPerformanceTab } from './components/DayPerformanceTab';
 import { PatrimonyTab } from './components/PatrimonyTab';
 import { AllocationTab } from './components/AllocationTab';
 import { HoldingsTab } from './components/HoldingsTab';
@@ -60,6 +62,7 @@ import { CuriositiesTab } from './components/CuriositiesTab';
 
 type TabId =
   | 'RENTABILIDADE'
+  | 'PERFORMANCE_DO_DIA'
   | 'PATRIMONIO'
   | 'ALOCACAO'
   | 'ATIVOS'
@@ -1189,6 +1192,7 @@ export function App() {
         <div className="max-w-[1440px] mx-auto px-3 sm:px-6 flex items-center gap-1 overflow-x-auto no-scrollbar">
           {[
             { id: 'RENTABILIDADE', label: 'Rentabilidade', icon: LineChart },
+            { id: 'PERFORMANCE_DO_DIA', label: 'Performance do Dia', icon: Activity },
             { id: 'PATRIMONIO', label: 'Distribuição do Patrimônio', icon: PieChart },
             { id: 'ALOCACAO', label: 'Alocação', icon: Target },
             { id: 'ATIVOS', label: 'Carteira & Custódia', icon: Briefcase },
@@ -1304,6 +1308,20 @@ export function App() {
             monthlyPerformance={monthlyPerformance}
             currency={currency}
             onCurrencyChange={setCurrency}
+          />
+        )}
+
+        {activeTab === 'PERFORMANCE_DO_DIA' && (
+          <DayPerformanceTab
+            holdings={holdings}
+            ptax={ptax}
+            currency={currency}
+            hideValues={hideValues}
+            onRefreshQuotes={async () => {
+              await handleRefreshLiveQuotes(false);
+            }}
+            isSyncing={syncStatus === 'SYNCING'}
+            lastUpdated={lastLiveUpdate}
           />
         )}
 
