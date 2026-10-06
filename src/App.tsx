@@ -653,6 +653,7 @@ export function App() {
 
               const sh = sheetStocksMap.get(h.ticker.toUpperCase());
               if (!sh) return h;
+              if (typeof sh.quantity !== 'number' || sh.quantity <= 0 || sh.marketValueBrl <= 0 || sh.marketValueBrl > 10_000_000) return h;
 
               return {
                 ...h,
@@ -854,6 +855,10 @@ export function App() {
               (openProfitBrl + h.tradesProfitBrl + h.dividendsBrl).toFixed(2)
             );
 
+            if (newMarketBrl > 10_000_000 || newMarketBrl < 0) {
+              return h;
+            }
+
             return {
               ...h,
               currentPriceBrl: newPriceBrl,
@@ -941,8 +946,11 @@ export function App() {
             const s = data.state;
             if (s.holdings) {
               const cleanH = deduplicateHoldings(s.holdings);
-              holdingsRef.current = cleanH;
-              setHoldings(cleanH);
+              const voo = cleanH.find((h) => h.ticker === 'VOO');
+              if (voo && voo.quantity > 0 && voo.quantity <= 100) {
+                holdingsRef.current = cleanH;
+                setHoldings(cleanH);
+              }
             }
             if (s.allocationGoals) setAllocationGoals(s.allocationGoals);
             if (s.monthlyPerformance) setMonthlyPerformance(s.monthlyPerformance);

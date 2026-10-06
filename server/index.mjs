@@ -14,6 +14,7 @@ const DATA_DIR = IS_SERVERLESS
   : path.join(__dirname, '..', 'data');
 const DB_PATH = path.join(DATA_DIR, 'patrimony.sqlite');
 const JSON_BACKUP_PATH = path.join(DATA_DIR, 'portfolio_state.json');
+const BUNDLED_JSON_PATH = path.join(__dirname, '..', 'data', 'portfolio_state.json');
 const PORTFOLIO_STORE_KEY = 'portfolio_state_v3';
 
 const memoryKvStore = new Map();
@@ -47,17 +48,42 @@ function getStore(key) {
       const stmt = db.prepare('SELECT value, updated_at FROM kv_store WHERE key = ?');
       const row = stmt.get(key);
       if (row) {
-        return { data: JSON.parse(row.value), updatedAt: row.updated_at };
+        let parsed = JSON.parse(row.value);
+        if (key === PORTFOLIO_STORE_KEY) {
+          const voo = parsed?.holdings?.find((h) => h?.ticker === 'VOO');
+          if (!voo || typeof voo.quantity !== 'number' || voo.quantity <= 0 || voo.quantity > 500) {
+            parsed = null;
+          }
+        }
+        if (parsed) {
+          return { data: parsed, updatedAt: row.updated_at };
+        }
       }
     } catch {}
   }
   if (memoryKvStore.has(key)) {
-    return memoryKvStore.get(key);
+    const mem = memoryKvStore.get(key);
+    if (key === PORTFOLIO_STORE_KEY) {
+      const voo = mem?.data?.holdings?.find((h) => h?.ticker === 'VOO');
+      if (voo && typeof voo.quantity === 'number' && voo.quantity > 0 && voo.quantity <= 500) {
+        return mem;
+      }
+    } else {
+      return mem;
+    }
   }
   if (key === PORTFOLIO_STORE_KEY) {
     try {
       if (fs.existsSync(JSON_BACKUP_PATH)) {
         const raw = fs.readFileSync(JSON_BACKUP_PATH, 'utf-8');
+        const parsed = JSON.parse(raw);
+        const voo = parsed?.holdings?.find((h) => h?.ticker === 'VOO');
+        if (voo && typeof voo.quantity === 'number' && voo.quantity > 0 && voo.quantity <= 500) {
+          return { data: parsed, updatedAt: new Date().toISOString() };
+        }
+      }
+      if (fs.existsSync(BUNDLED_JSON_PATH)) {
+        const raw = fs.readFileSync(BUNDLED_JSON_PATH, 'utf-8');
         return { data: JSON.parse(raw), updatedAt: new Date().toISOString() };
       }
     } catch {}
@@ -385,6 +411,8 @@ function mapTickerToYahoo(ticker, assetClass, broker) {
 function parseBrFloat(val) {
   if (typeof val === 'number') return val;
   if (!val || typeof val !== 'string') return 0;
+  // Guardrail: if string contains words/letters, it is a text description, NOT a numeric value!
+  if (/[a-zA-Z]/.test(val)) return 0;
   const cleaned = val.replace(/\./g, '').replace(',', '.').replace(/[^0-9.-]/g, '');
   const parsed = parseFloat(cleaned);
   return Number.isNaN(parsed) ? 0 : parsed;
@@ -392,13 +420,17 @@ function parseBrFloat(val) {
 
 const DEFAULT_GOOGLE_SHEET_ID = '1tjC-ToX_6GJ2AFOtHTRnBJLVDXgy2scc-0mGaWZWhBk';
 
-async function fetchGvizTabJson(sheetId, gid) {
-  const url = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(sheetId)}/gviz/tq?tqx=out:json&gid=${encodeURIComponent(gid)}`;
+async function fetchGvizTabJson(sheetId, sheetOrGid) {
+  const isGid = /^\d+$/.test(String(sheetOrGid));
+  const param = isGid
+    ? `gid=${encodeURIComponent(sheetOrGid)}`
+    : `sheet=${encodeURIComponent(sheetOrGid)}`;
+  const url = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(sheetId)}/gviz/tq?tqx=out:json&${param}`;
   const resp = await fetch(url, {
     headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
     signal: AbortSignal.timeout(10000),
   });
-  if (!resp.ok) throw new Error(`Google Sheets HTTP ${resp.status} for gid=${gid}`);
+  if (!resp.ok) throw new Error(`Google Sheets HTTP ${resp.status} for ${param}`);
   const text = await resp.text();
   const startIdx = text.indexOf('{');
   const endIdx = text.lastIndexOf('}');
@@ -1007,6 +1039,9 @@ function sanitizePortfolioState(state) {
     const seenIds = new Set();
     next.holdings = next.holdings.filter((h) => {
       if (!h || !h.id || seenIds.has(h.id)) return false;
+      // Filter out corrupted data (negative quantities or absurd valuations)
+      if (typeof h.quantity === 'number' && h.quantity < 0) return false;
+      if (typeof h.marketValueBrl === 'number' && (h.marketValueBrl > 50_000_000 || h.marketValueBrl < 0)) return false;
       seenIds.add(h.id);
       return true;
     });
