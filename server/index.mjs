@@ -1276,7 +1276,7 @@ export function createApiApp() {
 
     const [googleSheetsLive, patrimonySheetLive, indexEntries] = await Promise.all([
       shouldFetchSheets ? fetchGoogleSheetsPortfolio(sheetId, Boolean(forceGoogleSheets)) : Promise.resolve(null),
-      shouldFetchSheets ? fetchPatrimonyAnalysisSheet(patrimonySheetId, Boolean(forceGoogleSheets)) : Promise.resolve(null),
+      fetchPatrimonyAnalysisSheet(patrimonySheetId, Boolean(forceGoogleSheets)),
       Promise.all(
         indexSymbols.map(async (item) => {
           const q = await fetchYahooQuote(item.yahoo);

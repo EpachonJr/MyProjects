@@ -7,6 +7,7 @@ import {
   RefreshCw,
   Clock,
   ChevronDown,
+  ChevronUp,
   ChevronRight,
   ArrowUpDown,
   Filter,
@@ -94,6 +95,53 @@ function getMarketStatus(): { b3Open: boolean; usOpen: boolean } {
   return { b3Open, usOpen };
 }
 
+export type HoldingsSortColumn =
+  | 'ticker'
+  | 'class'
+  | 'quantity'
+  | 'currentPrice'
+  | 'dailyPct'
+  | 'dailyBrl'
+  | 'marketValue'
+  | 'invested'
+  | 'totalReturnPct'
+  | 'openProfitBrl'
+  | 'openProfitPct';
+
+export type PortfoliosSortColumn =
+  | 'name'
+  | 'symbolsCount'
+  | 'costBasis'
+  | 'marketValue'
+  | 'dayChangeBrl'
+  | 'dayChangePct'
+  | 'totalReturnPct'
+  | 'unrealizedGainBrl'
+  | 'realizedGainBrl';
+
+export function getHoldingTotalReturnPct(h: Holding): number {
+  if (h.investedBrl > 0 && typeof h.totalProfitBrl === 'number') {
+    return (h.totalProfitBrl / h.investedBrl) * 100;
+  }
+  if (typeof h.openProfitPct === 'number' && !isNaN(h.openProfitPct) && h.openProfitPct !== 0) {
+    return h.openProfitPct;
+  }
+  if (h.investedBrl > 0) {
+    return (h.openProfitBrl / h.investedBrl) * 100;
+  }
+  return 0;
+}
+
+export function getHoldingOpenReturnPct(h: Holding): number {
+  if (typeof h.openProfitPct === 'number' && !isNaN(h.openProfitPct)) {
+    return h.openProfitPct;
+  }
+  if (h.investedBrl > 0) {
+    return (h.openProfitBrl / h.investedBrl) * 100;
+  }
+  return 0;
+}
+
 export const DayPerformanceTab: React.FC<DayPerformanceTabProps> = ({
   holdings,
   ptax,
@@ -107,8 +155,10 @@ export const DayPerformanceTab: React.FC<DayPerformanceTabProps> = ({
   const [expandedPortfolio, setExpandedPortfolio] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [classFilter, setClassFilter] = useState<'ALL' | AssetClass>('ALL');
-  const [sortBy, setSortBy] = useState<'dailyPct' | 'dailyBrl' | 'marketValue' | 'ticker'>('dailyPct');
+  const [sortBy, setSortBy] = useState<HoldingsSortColumn>('dailyPct');
   const [sortDesc, setSortDesc] = useState(true);
+  const [portSortBy, setPortSortBy] = useState<PortfoliosSortColumn>('marketValue');
+  const [portSortDesc, setPortSortDesc] = useState(true);
 
   const { b3Open, usOpen } = useMemo(() => getMarketStatus(), []);
 
@@ -173,7 +223,7 @@ export const DayPerformanceTab: React.FC<DayPerformanceTabProps> = ({
 
   // Portfolios Groups computation (exactly matching the Yahoo Finance layout)
   const portfolioSummaries = useMemo(() => {
-    return PORTFOLIO_GROUPS.map((group) => {
+    const list = PORTFOLIO_GROUPS.map((group) => {
       const items = tradeableHoldings.filter(group.filterFn);
       const symbolsCount = items.length;
 
@@ -195,6 +245,8 @@ export const DayPerformanceTab: React.FC<DayPerformanceTabProps> = ({
       const dayChangePct = prevMarket > 0 ? (dayChangeBrl / prevMarket) * 100 : 0;
       const unrealizedPct = costBasis > 0 ? (unrealizedGainBrl / costBasis) * 100 : 0;
       const realizedPct = costBasis > 0 ? (realizedGainBrl / costBasis) * 100 : 0;
+      const totalReturnPct =
+        costBasis > 0 ? ((unrealizedGainBrl + realizedGainBrl) / costBasis) * 100 : unrealizedPct;
 
       return {
         ...group,
@@ -208,9 +260,53 @@ export const DayPerformanceTab: React.FC<DayPerformanceTabProps> = ({
         unrealizedPct,
         realizedGainBrl,
         realizedPct,
+        totalReturnPct,
       };
     });
-  }, [tradeableHoldings]);
+
+    return [...list].sort((a, b) => {
+      let cmp = 0;
+      switch (portSortBy) {
+        case 'name':
+          cmp = a.name.localeCompare(b.name);
+          break;
+        case 'symbolsCount':
+          cmp = a.symbolsCount - b.symbolsCount;
+          break;
+        case 'costBasis':
+          cmp = a.costBasis - b.costBasis;
+          break;
+        case 'marketValue':
+          cmp = a.marketValue - b.marketValue;
+          break;
+        case 'dayChangeBrl':
+          cmp = a.dayChangeBrl - b.dayChangeBrl;
+          break;
+        case 'dayChangePct':
+          cmp = a.dayChangePct - b.dayChangePct;
+          break;
+        case 'totalReturnPct':
+          cmp = a.totalReturnPct - b.totalReturnPct;
+          break;
+        case 'unrealizedGainBrl':
+          cmp = a.unrealizedGainBrl - b.unrealizedGainBrl;
+          break;
+        case 'realizedGainBrl':
+          cmp = a.realizedGainBrl - b.realizedGainBrl;
+          break;
+      }
+      return portSortDesc ? -cmp : cmp;
+    });
+  }, [tradeableHoldings, portSortBy, portSortDesc]);
+
+  const togglePortSort = (col: PortfoliosSortColumn) => {
+    if (portSortBy === col) {
+      setPortSortDesc(!portSortDesc);
+    } else {
+      setPortSortBy(col);
+      setPortSortDesc(col !== 'name');
+    }
+  };
 
   // Filtered and Sorted Individual Holdings for "My Holdings" tab
   const filteredHoldings = useMemo(() => {
@@ -229,25 +325,53 @@ export const DayPerformanceTab: React.FC<DayPerformanceTabProps> = ({
 
     return [...result].sort((a, b) => {
       let cmp = 0;
-      if (sortBy === 'dailyPct') {
-        cmp = (a.dailyChangePct ?? 0) - (b.dailyChangePct ?? 0);
-      } else if (sortBy === 'dailyBrl') {
-        cmp = (a.dailyChangeBrl ?? 0) - (b.dailyChangeBrl ?? 0);
-      } else if (sortBy === 'marketValue') {
-        cmp = a.marketValueBrl - b.marketValueBrl;
-      } else if (sortBy === 'ticker') {
-        cmp = a.ticker.localeCompare(b.ticker);
+      switch (sortBy) {
+        case 'ticker':
+          cmp = a.ticker.localeCompare(b.ticker);
+          break;
+        case 'class':
+          cmp = (a.macroGroup || a.assetClass).localeCompare(b.macroGroup || b.assetClass);
+          break;
+        case 'quantity':
+          cmp = (a.quantity ?? 0) - (b.quantity ?? 0);
+          break;
+        case 'currentPrice':
+          cmp = (a.currentPriceBrl ?? 0) - (b.currentPriceBrl ?? 0);
+          break;
+        case 'dailyPct':
+          cmp = (a.dailyChangePct ?? 0) - (b.dailyChangePct ?? 0);
+          break;
+        case 'dailyBrl':
+          cmp = (a.dailyChangeBrl ?? 0) - (b.dailyChangeBrl ?? 0);
+          break;
+        case 'marketValue':
+          cmp = a.marketValueBrl - b.marketValueBrl;
+          break;
+        case 'invested':
+          cmp = a.investedBrl - b.investedBrl;
+          break;
+        case 'totalReturnPct':
+          cmp = getHoldingTotalReturnPct(a) - getHoldingTotalReturnPct(b);
+          break;
+        case 'openProfitPct':
+          cmp = getHoldingOpenReturnPct(a) - getHoldingOpenReturnPct(b);
+          break;
+        case 'openProfitBrl':
+        default:
+          cmp = (a.openProfitBrl ?? 0) - (b.openProfitBrl ?? 0);
+          break;
       }
       return sortDesc ? -cmp : cmp;
     });
   }, [tradeableHoldings, classFilter, searchQuery, sortBy, sortDesc]);
 
-  const toggleSort = (col: typeof sortBy) => {
+  const toggleSort = (col: HoldingsSortColumn) => {
     if (sortBy === col) {
       setSortDesc(!sortDesc);
     } else {
       setSortBy(col);
-      setSortDesc(true);
+      // Alphabetical columns default to ascending (A-Z), financial metrics default to descending (highest first)
+      setSortDesc(col !== 'ticker' && col !== 'class');
     }
   };
 
@@ -485,22 +609,129 @@ export const DayPerformanceTab: React.FC<DayPerformanceTabProps> = ({
             <table className="w-full text-left text-xs whitespace-nowrap">
               <thead>
                 <tr className="bg-[#12141a] text-slate-400 border-b border-[#2b303b]">
-                  <th className="py-3.5 px-4 font-bold uppercase tracking-wider">Portfolio Name</th>
-                  <th className="py-3.5 px-3 font-bold uppercase tracking-wider text-center">Symbols</th>
-                  <th className="py-3.5 px-4 font-bold uppercase tracking-wider text-right">
-                    Cost Basis <span className="text-[10px] font-normal text-slate-500 italic block">Includes cash</span>
+                  <th
+                    onClick={() => togglePortSort('name')}
+                    className={`py-3.5 px-4 font-bold uppercase tracking-wider cursor-pointer transition-colors ${
+                      portSortBy === 'name' ? 'text-amber-400 bg-[#161a22]' : 'hover:text-white'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      Portfolio Name
+                      {portSortBy === 'name' ? (
+                        portSortDesc ? <ChevronDown className="w-3.5 h-3.5 text-amber-400" /> : <ChevronUp className="w-3.5 h-3.5 text-amber-400" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                      )}
+                    </div>
                   </th>
-                  <th className="py-3.5 px-4 font-bold uppercase tracking-wider text-right">
-                    Market Value <span className="text-[10px] font-normal text-slate-500 italic block">Includes cash</span>
+                  <th
+                    onClick={() => togglePortSort('symbolsCount')}
+                    className={`py-3.5 px-3 font-bold uppercase tracking-wider text-center cursor-pointer transition-colors ${
+                      portSortBy === 'symbolsCount' ? 'text-amber-400 bg-[#161a22]' : 'hover:text-white'
+                    }`}
+                  >
+                    <div className="flex items-center justify-center gap-1.5">
+                      Symbols
+                      {portSortBy === 'symbolsCount' ? (
+                        portSortDesc ? <ChevronDown className="w-3.5 h-3.5 text-amber-400" /> : <ChevronUp className="w-3.5 h-3.5 text-amber-400" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                      )}
+                    </div>
                   </th>
-                  <th className="py-3.5 px-4 font-bold uppercase tracking-wider text-right">
-                    Day Change
+                  <th
+                    onClick={() => togglePortSort('costBasis')}
+                    className={`py-3.5 px-4 font-bold uppercase tracking-wider text-right cursor-pointer transition-colors ${
+                      portSortBy === 'costBasis' ? 'text-amber-400 bg-[#161a22]' : 'hover:text-white'
+                    }`}
+                  >
+                    <div className="flex items-center justify-end gap-1.5">
+                      <div>
+                        Cost Basis <span className="text-[10px] font-normal text-slate-500 italic block">Includes cash</span>
+                      </div>
+                      {portSortBy === 'costBasis' ? (
+                        portSortDesc ? <ChevronDown className="w-3.5 h-3.5 text-amber-400" /> : <ChevronUp className="w-3.5 h-3.5 text-amber-400" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                      )}
+                    </div>
                   </th>
-                  <th className="py-3.5 px-4 font-bold uppercase tracking-wider text-right">
-                    Unrealized Gain/Loss
+                  <th
+                    onClick={() => togglePortSort('marketValue')}
+                    className={`py-3.5 px-4 font-bold uppercase tracking-wider text-right cursor-pointer transition-colors ${
+                      portSortBy === 'marketValue' ? 'text-amber-400 bg-[#161a22]' : 'hover:text-white'
+                    }`}
+                  >
+                    <div className="flex items-center justify-end gap-1.5">
+                      <div>
+                        Market Value <span className="text-[10px] font-normal text-slate-500 italic block">Includes cash</span>
+                      </div>
+                      {portSortBy === 'marketValue' ? (
+                        portSortDesc ? <ChevronDown className="w-3.5 h-3.5 text-amber-400" /> : <ChevronUp className="w-3.5 h-3.5 text-amber-400" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                      )}
+                    </div>
                   </th>
-                  <th className="py-3.5 px-4 font-bold uppercase tracking-wider text-right">
-                    Realized Gain/Loss
+                  <th
+                    onClick={() => togglePortSort('dayChangeBrl')}
+                    className={`py-3.5 px-4 font-bold uppercase tracking-wider text-right cursor-pointer transition-colors ${
+                      portSortBy === 'dayChangeBrl' || portSortBy === 'dayChangePct' ? 'text-amber-400 bg-[#161a22]' : 'hover:text-white'
+                    }`}
+                  >
+                    <div className="flex items-center justify-end gap-1.5">
+                      Day Change
+                      {portSortBy === 'dayChangeBrl' || portSortBy === 'dayChangePct' ? (
+                        portSortDesc ? <ChevronDown className="w-3.5 h-3.5 text-amber-400" /> : <ChevronUp className="w-3.5 h-3.5 text-amber-400" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => togglePortSort('totalReturnPct')}
+                    className={`py-3.5 px-4 font-bold uppercase tracking-wider text-right cursor-pointer transition-colors ${
+                      portSortBy === 'totalReturnPct' ? 'text-amber-400 bg-[#161a22]' : 'hover:text-white'
+                    }`}
+                  >
+                    <div className="flex items-center justify-end gap-1.5">
+                      <span className="text-amber-300">Rentab. Total (%)</span>
+                      {portSortBy === 'totalReturnPct' ? (
+                        portSortDesc ? <ChevronDown className="w-3.5 h-3.5 text-amber-400" /> : <ChevronUp className="w-3.5 h-3.5 text-amber-400" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-amber-400/70" />
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => togglePortSort('unrealizedGainBrl')}
+                    className={`py-3.5 px-4 font-bold uppercase tracking-wider text-right cursor-pointer transition-colors ${
+                      portSortBy === 'unrealizedGainBrl' ? 'text-amber-400 bg-[#161a22]' : 'hover:text-white'
+                    }`}
+                  >
+                    <div className="flex items-center justify-end gap-1.5">
+                      Unrealized Gain/Loss
+                      {portSortBy === 'unrealizedGainBrl' ? (
+                        portSortDesc ? <ChevronDown className="w-3.5 h-3.5 text-amber-400" /> : <ChevronUp className="w-3.5 h-3.5 text-amber-400" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => togglePortSort('realizedGainBrl')}
+                    className={`py-3.5 px-4 font-bold uppercase tracking-wider text-right cursor-pointer transition-colors ${
+                      portSortBy === 'realizedGainBrl' ? 'text-amber-400 bg-[#161a22]' : 'hover:text-white'
+                    }`}
+                  >
+                    <div className="flex items-center justify-end gap-1.5">
+                      Realized Gain/Loss
+                      {portSortBy === 'realizedGainBrl' ? (
+                        portSortDesc ? <ChevronDown className="w-3.5 h-3.5 text-amber-400" /> : <ChevronUp className="w-3.5 h-3.5 text-amber-400" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                      )}
+                    </div>
                   </th>
                   <th className="py-3.5 px-3 text-center"></th>
                 </tr>
@@ -511,6 +742,7 @@ export const DayPerformanceTab: React.FC<DayPerformanceTabProps> = ({
                   const dayPositive = p.dayChangeBrl >= 0;
                   const unrlPositive = p.unrealizedGainBrl >= 0;
                   const rlPositive = p.realizedGainBrl >= 0;
+                  const totRetPositive = p.totalReturnPct >= 0;
 
                   return (
                     <React.Fragment key={p.id}>
@@ -577,6 +809,22 @@ export const DayPerformanceTab: React.FC<DayPerformanceTabProps> = ({
                           </div>
                         </td>
 
+                        {/* Rentabilidade Total (%) */}
+                        <td className="py-3.5 px-4 text-right">
+                          <div className="flex items-center justify-end">
+                            <span
+                              className={`px-2.5 py-1 rounded-xl text-xs font-black shadow-sm ${
+                                totRetPositive
+                                  ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                                  : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+                              }`}
+                            >
+                              {totRetPositive ? '+' : ''}
+                              {p.totalReturnPct.toFixed(2)}%
+                            </span>
+                          </div>
+                        </td>
+
                         {/* Unrealized Gain/Loss */}
                         <td className="py-3.5 px-4 text-right">
                           <div
@@ -632,7 +880,7 @@ export const DayPerformanceTab: React.FC<DayPerformanceTabProps> = ({
                       {/* Accordion / Expanded Assets of this Portfolio */}
                       {isExpanded && (
                         <tr>
-                          <td colSpan={8} className="p-0 bg-[#12141a]">
+                          <td colSpan={9} className="p-0 bg-[#12141a]">
                             <div className="p-4 border-y border-[#2b303b]/60">
                               <div className="flex items-center justify-between mb-2.5 px-2">
                                 <span className="text-xs font-bold text-slate-300">
@@ -647,20 +895,23 @@ export const DayPerformanceTab: React.FC<DayPerformanceTabProps> = ({
                                 <table className="w-full text-left text-xs whitespace-nowrap">
                                   <thead className="bg-[#191c24] text-slate-400 border-b border-[#2b303b]">
                                     <tr>
-                                      <th className="py-2.5 px-3">Símbolo</th>
-                                      <th className="py-2.5 px-3">Nome</th>
-                                      <th className="py-2.5 px-3 text-right">Qtd</th>
-                                      <th className="py-2.5 px-3 text-right">Preço</th>
-                                      <th className="py-2.5 px-3 text-right">Variação Dia (R$)</th>
-                                      <th className="py-2.5 px-3 text-right">Variação Dia (%)</th>
-                                      <th className="py-2.5 px-3 text-right">Valor Mercado</th>
-                                      <th className="py-2.5 px-3 text-right">Lucro Total</th>
+                                      <th className="py-2.5 px-3 font-bold uppercase">Símbolo</th>
+                                      <th className="py-2.5 px-3 font-bold uppercase">Nome</th>
+                                      <th className="py-2.5 px-3 font-bold uppercase text-right">Qtd</th>
+                                      <th className="py-2.5 px-3 font-bold uppercase text-right">Preço</th>
+                                      <th className="py-2.5 px-3 font-bold uppercase text-right">Variação Dia (R$)</th>
+                                      <th className="py-2.5 px-3 font-bold uppercase text-right">Variação Dia (%)</th>
+                                      <th className="py-2.5 px-3 font-bold uppercase text-right">Valor Mercado</th>
+                                      <th className="py-2.5 px-3 font-bold uppercase text-right text-amber-300">Rentab. Total (%)</th>
+                                      <th className="py-2.5 px-3 font-bold uppercase text-right">Lucro Total</th>
                                     </tr>
                                   </thead>
                                   <tbody className="divide-y divide-[#232732] bg-[#14161d]">
                                     {p.items.map((it) => {
                                       const itDayPos = (it.dailyChangeBrl ?? 0) >= 0;
                                       const itProfPos = (it.openProfitBrl ?? 0) >= 0;
+                                      const itTotRetPct = getHoldingTotalReturnPct(it);
+                                      const itTotRetPos = itTotRetPct >= 0;
                                       return (
                                         <tr key={it.id} className="hover:bg-[#1c202a]">
                                           <td className="py-2.5 px-3 font-extrabold text-amber-400">
@@ -702,6 +953,18 @@ export const DayPerformanceTab: React.FC<DayPerformanceTabProps> = ({
                                           <td className="py-2.5 px-3 text-right font-mono font-bold text-white">
                                             {formatCurrency(it.marketValueBrl, currency, ptax, hideValues)}
                                           </td>
+                                          <td className="py-2.5 px-3 text-right font-bold">
+                                            <span
+                                              className={`inline-block px-2 py-0.5 rounded-lg text-xs font-black ${
+                                                itTotRetPos
+                                                  ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                                                  : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+                                              }`}
+                                            >
+                                              {itTotRetPos ? '+' : ''}
+                                              {itTotRetPct.toFixed(2)}%
+                                            </span>
+                                          </td>
                                           <td
                                             className={`py-2.5 px-3 text-right font-mono font-bold ${
                                               itProfPos ? 'text-emerald-400' : 'text-rose-400'
@@ -732,7 +995,7 @@ export const DayPerformanceTab: React.FC<DayPerformanceTabProps> = ({
       {/* VIEW 2: MY HOLDINGS (Individual Stocks, FIIs, ETFs & Crypto with live performance) */}
       {subView === 'HOLDINGS' && (
         <div className="bg-[#161920] rounded-2xl border border-[#2b303b] overflow-hidden shadow-xl space-y-4 p-4 sm:p-5">
-          {/* Filter Chips + Search Input */}
+          {/* Top Control Bar: Filter Chips + Search Input */}
           <div className="flex flex-wrap items-center justify-between gap-3">
             {/* Filter Pills */}
             <div className="flex flex-wrap items-center gap-1.5">
@@ -796,60 +1059,255 @@ export const DayPerformanceTab: React.FC<DayPerformanceTabProps> = ({
             </div>
           </div>
 
-          {/* Holdings Table */}
+          {/* Quick-Sort Presets Strip */}
+          <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-[#232732]/60">
+            <span className="text-[11px] font-bold text-slate-400 flex items-center gap-1 mr-1">
+              <ArrowUpDown className="w-3.5 h-3.5 text-amber-400" />
+              Ordenar por:
+            </span>
+            {[
+              {
+                id: 'totRet-desc',
+                label: '🔥 Maior Rentabilidade Total',
+                col: 'totalReturnPct' as HoldingsSortColumn,
+                desc: true,
+              },
+              {
+                id: 'totRet-asc',
+                label: '🔻 Menor Rentabilidade Total',
+                col: 'totalReturnPct' as HoldingsSortColumn,
+                desc: false,
+              },
+              {
+                id: 'day-desc',
+                label: '🚀 Maior Alta do Dia',
+                col: 'dailyPct' as HoldingsSortColumn,
+                desc: true,
+              },
+              {
+                id: 'day-asc',
+                label: '📉 Maior Baixa do Dia',
+                col: 'dailyPct' as HoldingsSortColumn,
+                desc: false,
+              },
+              {
+                id: 'mkt-desc',
+                label: '💰 Maior Valor de Mercado',
+                col: 'marketValue' as HoldingsSortColumn,
+                desc: true,
+              },
+              {
+                id: 'prof-desc',
+                label: '💵 Maior Lucro R$',
+                col: 'openProfitBrl' as HoldingsSortColumn,
+                desc: true,
+              },
+            ].map((pill) => {
+              const isPillActive = sortBy === pill.col && sortDesc === pill.desc;
+              return (
+                <button
+                  key={pill.id}
+                  onClick={() => {
+                    setSortBy(pill.col);
+                    setSortDesc(pill.desc);
+                  }}
+                  className={`px-2.5 py-1 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1 ${
+                    isPillActive
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/50 shadow-md shadow-amber-500/10'
+                      : 'bg-[#111317] text-slate-400 hover:text-white hover:bg-slate-800/60 border border-[#2b303b]'
+                  }`}
+                >
+                  {pill.label}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Holdings Table with All Columns Sortable */}
           <div className="overflow-x-auto rounded-xl border border-[#2b303b]">
             <table className="w-full text-left text-xs whitespace-nowrap">
               <thead>
                 <tr className="bg-[#12141a] text-slate-400 border-b border-[#2b303b]">
+                  {/* Símbolo & Ativo */}
                   <th
                     onClick={() => toggleSort('ticker')}
-                    className="py-3 px-4 font-bold uppercase tracking-wider cursor-pointer hover:text-white"
+                    className={`py-3.5 px-4 font-bold uppercase tracking-wider cursor-pointer transition-colors ${
+                      sortBy === 'ticker' ? 'text-amber-400 bg-[#161a22]' : 'hover:text-white'
+                    }`}
+                    title="Clique para ordenar por Símbolo"
                   >
                     <div className="flex items-center gap-1.5">
                       Símbolo & Ativo
-                      <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                      {sortBy === 'ticker' ? (
+                        sortDesc ? <ChevronDown className="w-3.5 h-3.5 text-amber-400" /> : <ChevronUp className="w-3.5 h-3.5 text-amber-400" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                      )}
                     </div>
                   </th>
-                  <th className="py-3 px-3 font-bold uppercase tracking-wider">Classe</th>
-                  <th className="py-3 px-3 font-bold uppercase tracking-wider text-right">Qtd</th>
-                  <th className="py-3 px-3 font-bold uppercase tracking-wider text-right">Preço Atual</th>
+
+                  {/* Classe */}
+                  <th
+                    onClick={() => toggleSort('class')}
+                    className={`py-3.5 px-3 font-bold uppercase tracking-wider cursor-pointer transition-colors ${
+                      sortBy === 'class' ? 'text-amber-400 bg-[#161a22]' : 'hover:text-white'
+                    }`}
+                    title="Clique para ordenar por Classe de Ativo"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      Classe
+                      {sortBy === 'class' ? (
+                        sortDesc ? <ChevronDown className="w-3.5 h-3.5 text-amber-400" /> : <ChevronUp className="w-3.5 h-3.5 text-amber-400" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                      )}
+                    </div>
+                  </th>
+
+                  {/* Qtd */}
+                  <th
+                    onClick={() => toggleSort('quantity')}
+                    className={`py-3.5 px-3 font-bold uppercase tracking-wider text-right cursor-pointer transition-colors ${
+                      sortBy === 'quantity' ? 'text-amber-400 bg-[#161a22]' : 'hover:text-white'
+                    }`}
+                    title="Clique para ordenar por Quantidade de Cotas"
+                  >
+                    <div className="flex items-center justify-end gap-1.5">
+                      Qtd
+                      {sortBy === 'quantity' ? (
+                        sortDesc ? <ChevronDown className="w-3.5 h-3.5 text-amber-400" /> : <ChevronUp className="w-3.5 h-3.5 text-amber-400" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                      )}
+                    </div>
+                  </th>
+
+                  {/* Preço Atual */}
+                  <th
+                    onClick={() => toggleSort('currentPrice')}
+                    className={`py-3.5 px-3 font-bold uppercase tracking-wider text-right cursor-pointer transition-colors ${
+                      sortBy === 'currentPrice' ? 'text-amber-400 bg-[#161a22]' : 'hover:text-white'
+                    }`}
+                    title="Clique para ordenar por Preço Unitário"
+                  >
+                    <div className="flex items-center justify-end gap-1.5">
+                      Preço Atual
+                      {sortBy === 'currentPrice' ? (
+                        sortDesc ? <ChevronDown className="w-3.5 h-3.5 text-amber-400" /> : <ChevronUp className="w-3.5 h-3.5 text-amber-400" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                      )}
+                    </div>
+                  </th>
+
+                  {/* Variação do Dia */}
                   <th
                     onClick={() => toggleSort('dailyPct')}
-                    className="py-3 px-4 font-bold uppercase tracking-wider text-right cursor-pointer hover:text-white"
+                    className={`py-3.5 px-4 font-bold uppercase tracking-wider text-right cursor-pointer transition-colors ${
+                      sortBy === 'dailyPct' || sortBy === 'dailyBrl' ? 'text-amber-400 bg-[#161a22]' : 'hover:text-white'
+                    }`}
+                    title="Clique para ordenar por Variação do Dia"
                   >
-                    <div className="flex items-center justify-end gap-1.5 text-amber-400">
+                    <div className="flex items-center justify-end gap-1.5">
                       Variação do Dia
-                      <ArrowUpDown className="w-3 h-3 text-amber-400" />
+                      {sortBy === 'dailyPct' || sortBy === 'dailyBrl' ? (
+                        sortDesc ? <ChevronDown className="w-3.5 h-3.5 text-amber-400" /> : <ChevronUp className="w-3.5 h-3.5 text-amber-400" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                      )}
                     </div>
                   </th>
+
+                  {/* Valor de Mercado */}
                   <th
                     onClick={() => toggleSort('marketValue')}
-                    className="py-3 px-4 font-bold uppercase tracking-wider text-right cursor-pointer hover:text-white"
+                    className={`py-3.5 px-4 font-bold uppercase tracking-wider text-right cursor-pointer transition-colors ${
+                      sortBy === 'marketValue' ? 'text-amber-400 bg-[#161a22]' : 'hover:text-white'
+                    }`}
+                    title="Clique para ordenar por Valor de Mercado Total"
                   >
                     <div className="flex items-center justify-end gap-1.5">
                       Valor de Mercado
-                      <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                      {sortBy === 'marketValue' ? (
+                        sortDesc ? <ChevronDown className="w-3.5 h-3.5 text-amber-400" /> : <ChevronUp className="w-3.5 h-3.5 text-amber-400" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                      )}
                     </div>
                   </th>
-                  <th className="py-3 px-4 font-bold uppercase tracking-wider text-right">
-                    Custo Total
+
+                  {/* Custo Total */}
+                  <th
+                    onClick={() => toggleSort('invested')}
+                    className={`py-3.5 px-4 font-bold uppercase tracking-wider text-right cursor-pointer transition-colors ${
+                      sortBy === 'invested' ? 'text-amber-400 bg-[#161a22]' : 'hover:text-white'
+                    }`}
+                    title="Clique para ordenar por Custo Total Investido"
+                  >
+                    <div className="flex items-center justify-end gap-1.5">
+                      Custo Total
+                      {sortBy === 'invested' ? (
+                        sortDesc ? <ChevronDown className="w-3.5 h-3.5 text-amber-400" /> : <ChevronUp className="w-3.5 h-3.5 text-amber-400" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                      )}
+                    </div>
                   </th>
-                  <th className="py-3 px-4 font-bold uppercase tracking-wider text-right">
-                    Lucro Não Realizado
+
+                  {/* Rentabilidade Total (%) - REQUESTED COLUMN */}
+                  <th
+                    onClick={() => toggleSort('totalReturnPct')}
+                    className={`py-3.5 px-4 font-bold uppercase tracking-wider text-right cursor-pointer transition-colors ${
+                      sortBy === 'totalReturnPct' || sortBy === 'openProfitPct'
+                        ? 'text-amber-400 bg-[#161a22]'
+                        : 'hover:text-white'
+                    }`}
+                    title="Clique para ordenar por Rentabilidade Percentual Total do Ativo (Maior retorno para Menor)"
+                  >
+                    <div className="flex items-center justify-end gap-1.5">
+                      <span className="text-amber-300">Rentabilidade Total (%)</span>
+                      {sortBy === 'totalReturnPct' || sortBy === 'openProfitPct' ? (
+                        sortDesc ? <ChevronDown className="w-3.5 h-3.5 text-amber-400" /> : <ChevronUp className="w-3.5 h-3.5 text-amber-400" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-amber-400/70" />
+                      )}
+                    </div>
+                  </th>
+
+                  {/* Lucro Total R$ */}
+                  <th
+                    onClick={() => toggleSort('openProfitBrl')}
+                    className={`py-3.5 px-4 font-bold uppercase tracking-wider text-right cursor-pointer transition-colors ${
+                      sortBy === 'openProfitBrl' ? 'text-amber-400 bg-[#161a22]' : 'hover:text-white'
+                    }`}
+                    title="Clique para ordenar por Lucro Total em R$"
+                  >
+                    <div className="flex items-center justify-end gap-1.5">
+                      Lucro Total (R$)
+                      {sortBy === 'openProfitBrl' ? (
+                        sortDesc ? <ChevronDown className="w-3.5 h-3.5 text-amber-400" /> : <ChevronUp className="w-3.5 h-3.5 text-amber-400" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                      )}
+                    </div>
                   </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#232732] bg-[#161920]">
                 {filteredHoldings.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="py-8 text-center text-slate-500">
+                    <td colSpan={9} className="py-8 text-center text-slate-500">
                       Nenhum ativo encontrado para os filtros selecionados.
                     </td>
                   </tr>
                 ) : (
                   filteredHoldings.map((h) => {
                     const dayPositive = (h.dailyChangeBrl ?? 0) >= 0;
-                    const unrlPositive = (h.openProfitBrl ?? 0) >= 0;
+                    const totProfitVal = h.totalProfitBrl ?? h.openProfitBrl ?? 0;
+                    const totProfitPositive = totProfitVal >= 0;
+                    const totalReturnPct = getHoldingTotalReturnPct(h);
+                    const totalReturnPositive = totalReturnPct >= 0;
+                    const openReturnPct = getHoldingOpenReturnPct(h);
 
                     return (
                       <tr key={h.id} className="hover:bg-[#1b1e26] transition-colors">
@@ -919,23 +1377,41 @@ export const DayPerformanceTab: React.FC<DayPerformanceTabProps> = ({
                           {formatCurrency(h.investedBrl, currency, ptax, hideValues)}
                         </td>
 
-                        {/* Unrealized Gain/Loss */}
+                        {/* Rentabilidade Total (%) - REQUESTED COLUMN */}
                         <td className="py-3.5 px-4 text-right">
-                          <div
-                            className={`font-mono font-extrabold ${
-                              unrlPositive ? 'text-emerald-400' : 'text-rose-400'
-                            }`}
-                          >
-                            {unrlPositive ? '+' : ''}
-                            {formatCurrency(h.openProfitBrl, currency, ptax, hideValues)}
+                          <div className="flex items-center justify-end">
+                            <span
+                              className={`inline-flex items-center px-2.5 py-1 rounded-xl text-xs font-black shadow-sm ${
+                                totalReturnPositive
+                                  ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                                  : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+                              }`}
+                            >
+                              {totalReturnPositive ? '+' : ''}
+                              {totalReturnPct.toFixed(2)}%
+                            </span>
                           </div>
+                          {h.dividendsBrl && h.dividendsBrl > 0 ? (
+                            <div className="text-[10px] text-slate-400 mt-0.5 font-medium">
+                              sem prov.: {openReturnPct >= 0 ? '+' : ''}{openReturnPct.toFixed(1)}%
+                            </div>
+                          ) : null}
+                        </td>
+
+                        {/* Lucro Total R$ */}
+                        <td className="py-3.5 px-4 text-right font-mono">
                           <div
-                            className={`text-[11px] font-bold ${
-                              unrlPositive ? 'text-emerald-400' : 'text-rose-400'
+                            className={`font-extrabold text-sm ${
+                              totProfitPositive ? 'text-emerald-400' : 'text-rose-400'
                             }`}
                           >
-                            {unrlPositive ? '+' : ''}
-                            {(h.openProfitPct ?? 0).toFixed(2)}%
+                            {totProfitPositive ? '+' : ''}
+                            {formatCurrency(totProfitVal, currency, ptax, hideValues)}
+                          </div>
+                          <div className="text-[10px] text-slate-400 mt-0.5">
+                            {h.dividendsBrl && h.dividendsBrl > 0
+                              ? `Prov.: +${formatCurrency(h.dividendsBrl, currency, ptax, hideValues)}`
+                              : 'Ganho de capital'}
                           </div>
                         </td>
                       </tr>

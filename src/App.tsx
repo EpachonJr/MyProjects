@@ -317,11 +317,8 @@ export function App() {
           broker: h.broker,
         }));
 
-      // Check if Google Sheets were already synced in the last 24 hours (once per day)
-      const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-      const lastSheetSyncMs = Number(localStorage.getItem('patrimony_sheets_last_sync_ms') || '0');
-      const shouldSyncSheetsToday =
-        Boolean(forceSheetSync) || Date.now() - lastSheetSyncMs >= ONE_DAY_MS;
+      // Always query Google Sheets cache so the dashboard never diverges from the spreadsheet
+      const shouldSyncSheetsToday = true;
 
       const res = await fetch('/api/live-sync', {
         method: 'POST',
@@ -834,40 +831,15 @@ export function App() {
             const q = hQuotes[h.ticker];
             if (!q || typeof q.priceBrl !== 'number' || q.priceBrl <= 0) return h;
 
-            // When synchronized with Google Sheets, preserve the spreadsheet valuation (1:1 match)
-            // and apply only the intraday percentage change.
-            if (patLive && Array.isArray(patLive.stocksSheetHoldings) && patLive.stocksSheetHoldings.length > 0) {
-              return {
-                ...h,
-                dailyChangePct: q.changePct ?? h.dailyChangePct,
-              };
-            }
-
-            const newPriceBrl = Number(q.priceBrl.toFixed(2));
-            const newMarketBrl = Number((h.quantity * newPriceBrl).toFixed(2));
-            const prevMarketBrl = q.prevCloseBrl > 0 ? h.quantity * q.prevCloseBrl : newMarketBrl;
-            const dailyChangeBrl = Number((newMarketBrl - prevMarketBrl).toFixed(2));
-            const dailyChangePct = q.changePct ?? 0;
-            const openProfitBrl = Number((newMarketBrl - h.investedBrl).toFixed(2));
-            const openProfitPct =
-              h.investedBrl > 0 ? Number(((openProfitBrl / h.investedBrl) * 100).toFixed(2)) : 0;
-            const totalProfitBrl = Number(
-              (openProfitBrl + h.tradesProfitBrl + h.dividendsBrl).toFixed(2)
-            );
-
-            if (newMarketBrl > 10_000_000 || newMarketBrl < 0) {
-              return h;
-            }
+            // Preserve the base valuation from the spreadsheet (1:1 exact parity)!
+            // Quotes from Yahoo Finance only provide the intraday change % and daily change R$.
+            const dailyChangePct = q.changePct ?? h.dailyChangePct;
+            const dailyChangeBrl = Number(((h.marketValueBrl * dailyChangePct) / 100).toFixed(2));
 
             return {
               ...h,
-              currentPriceBrl: newPriceBrl,
-              marketValueBrl: newMarketBrl,
-              dailyChangeBrl,
               dailyChangePct,
-              openProfitBrl,
-              openProfitPct,
-              totalProfitBrl,
+              dailyChangeBrl: q.changePct !== undefined ? dailyChangeBrl : h.dailyChangeBrl,
             };
           })
         );
