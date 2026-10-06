@@ -34,4 +34,6 @@ Thumbs.db
 
 # Scratch scripts
 scratch_*.mjs
+scratch_api.json
+
 

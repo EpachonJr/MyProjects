@@ -619,12 +619,53 @@ export function App() {
             existingById.set(h.id, h);
           }
 
-          // Keep all non-FIXED_INCOME and non-FX-currency holdings exactly as they are
-          const preservedHoldings = currentHoldings.filter(
-            (h) =>
-              h.assetClass !== 'FIXED_INCOME' &&
-              !(h.assetClass === 'PROTECTION' && ['USD', 'GBP', 'EUR', 'CHF'].includes(h.ticker))
-          );
+          // Keep all non-FIXED_INCOME and non-FX-currency holdings, updated with live quantities/values from Stocks tab
+          const sheetStocksMap = new Map<string, any>();
+          if (patLive && Array.isArray(patLive.stocksSheetHoldings)) {
+            for (const sh of patLive.stocksSheetHoldings) {
+              if (sh.ticker) sheetStocksMap.set(sh.ticker.toUpperCase(), sh);
+            }
+          }
+
+          const preservedHoldings = currentHoldings
+            .filter(
+              (h) =>
+                h.assetClass !== 'FIXED_INCOME' &&
+                !(h.assetClass === 'PROTECTION' && ['USD', 'GBP', 'EUR', 'CHF'].includes(h.ticker))
+            )
+            .map((h) => {
+              if (h.assetClass === 'FGTS') {
+                const fgtsVal =
+                  typeof patLive.fgtsBrl === 'number' && patLive.fgtsBrl > 0
+                    ? patLive.fgtsBrl
+                    : h.marketValueBrl;
+                return {
+                  ...h,
+                  investedBrl: fgtsVal,
+                  avgPriceBrl: fgtsVal,
+                  currentPriceBrl: fgtsVal,
+                  marketValueBrl: fgtsVal,
+                };
+              }
+
+              const sh = sheetStocksMap.get(h.ticker.toUpperCase());
+              if (!sh) return h;
+
+              return {
+                ...h,
+                quantity: sh.quantity,
+                avgPriceBrl: sh.avgPriceBrl,
+                currentPriceBrl: sh.currentPriceBrl,
+                investedBrl: sh.investedBrl,
+                marketValueBrl: sh.marketValueBrl,
+                openProfitBrl: sh.openProfitBrl,
+                openProfitPct: sh.openProfitPct,
+                dividendsBrl: sh.dividendsBrl || h.dividendsBrl,
+                totalProfitBrl:
+                  sh.totalProfitBrl ||
+                  Number((sh.openProfitBrl + (sh.dividendsBrl || h.dividendsBrl || 0)).toFixed(2)),
+              };
+            });
 
           // A) Automated Fixed Income holdings (Active custody only; withdrawn products are kept in fixedIncomeProducts)
           const fiHoldings: Holding[] = updatedFiProducts
@@ -788,6 +829,15 @@ export function App() {
 
             const q = hQuotes[h.ticker];
             if (!q || typeof q.priceBrl !== 'number' || q.priceBrl <= 0) return h;
+
+            // When synchronized with Google Sheets, preserve the spreadsheet valuation (1:1 match)
+            // and apply only the intraday percentage change.
+            if (patLive && Array.isArray(patLive.stocksSheetHoldings) && patLive.stocksSheetHoldings.length > 0) {
+              return {
+                ...h,
+                dailyChangePct: q.changePct ?? h.dailyChangePct,
+              };
+            }
 
             const newPriceBrl = Number(q.priceBrl.toFixed(2));
             const newMarketBrl = Number((h.quantity * newPriceBrl).toFixed(2));

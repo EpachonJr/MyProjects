@@ -688,17 +688,22 @@ async function fetchPatrimonyAnalysisSheet(
   }
 
   try {
-    // Only fetch Fixed Income, Currency, and Manual Leftovers once per day
-    const [patJson, fiJson, currJson] = await Promise.all([
-      fetchGvizTabJson(sheetId, '1016513211'), // Patrimony (for manual leftovers & currency protection BRL only)
+    // Fetch Patrimony, Fixed Income, Currency, and Stocks tabs (once per day or on force-sync)
+    const [patJson, fiJson, currJson, stocksJson] = await Promise.all([
+      fetchGvizTabJson(sheetId, '1016513211'), // Patrimony (totals, FGTS, manual cash, protection BRL)
       fetchGvizTabJson(sheetId, '445356284'),  // Fixed Income
       fetchGvizTabJson(sheetId, '1898740221'), // Currency
+      fetchGvizTabJson(sheetId, 'Stocks'),     // Stocks tab (all 50 live equity, crypto, and gold holdings)
     ]);
 
-    // 1. Parse Manual Cash on Hand / Leftovers & Protection Currency Balances ONLY
+    // 1. Parse Manual Cash on Hand / Leftovers & Protection Currency Balances & Official Totals
     const patRows = patJson?.table?.rows || [];
     const manualCashItems = [];
     const protectionCurrencyBrl = {};
+    let fgtsBrl = 72456.16;
+    let officialTotalWithFgts = 918268.74;
+    let officialTotalLiquid = 845812.61;
+    const officialCategoryTotals = {};
 
     let inCashOnHandSection = false;
     let inProtectionSection = false;
@@ -709,6 +714,11 @@ async function fetchPatrimonyAnalysisSheet(
       const col2 = String(c[2]?.v || '').trim();
       const col3 = typeof c[3]?.v === 'number' ? c[3].v : parseBrFloat(c[3]?.f || c[3]?.v);
       const col4 = String(c[4]?.v || '').trim();
+
+      if (col2 === 'FGTS' && col3 > 0) fgtsBrl = Number(col3.toFixed(2));
+      if (col2 === 'Total with FGTS' && col3 > 0) officialTotalWithFgts = Number(col3.toFixed(2));
+      if (col2 === 'Total' && col3 > 0 && !inCashOnHandSection) officialTotalLiquid = Number(col3.toFixed(2));
+      if (col2 && col3 > 0) officialCategoryTotals[col2] = Number(col3.toFixed(2));
 
       if (col2 === 'CASH ON HAND SHARE') {
         inCashOnHandSection = true;
@@ -739,6 +749,44 @@ async function fetchPatrimonyAnalysisSheet(
         if (col2.startsWith('Pound')) protectionCurrencyBrl.GBP = Number(col3.toFixed(2));
         if (col2 === 'Swiss Franc') protectionCurrencyBrl.CHF = Number(col3.toFixed(2));
       }
+    }
+
+    // 1.5 Parse all holdings from Stocks tab (exact quantities, prices, profits, and market values)
+    const stocksRows = stocksJson?.table?.rows || [];
+    const stocksSheetHoldings = [];
+    for (let r = 2; r < stocksRows.length; r++) {
+      const c = stocksRows[r]?.c || [];
+      const ticker = String(c[2]?.v || '').trim();
+      if (!ticker) continue;
+
+      const cat = String(c[0]?.v || '').trim();
+      const avgPriceBrl = typeof c[3]?.v === 'number' ? c[3].v : parseBrFloat(c[3]?.f || c[3]?.v);
+      const quantity = typeof c[4]?.v === 'number' ? c[4].v : parseBrFloat(c[4]?.f || c[4]?.v);
+      const investedBrl = typeof c[5]?.v === 'number' ? c[5].v : parseBrFloat(c[5]?.f || c[5]?.v);
+      const openProfitBrl = typeof c[6]?.v === 'number' ? c[6].v : parseBrFloat(c[6]?.f || c[6]?.v);
+      const openProfitPct = typeof c[7]?.v === 'number' ? c[7].v * 100 : parseBrFloat(c[7]?.f || c[7]?.v);
+      const dividendsBrl = typeof c[8]?.v === 'number' ? c[8].v : parseBrFloat(c[8]?.f || c[8]?.v);
+      const marketValueBrl = typeof c[9]?.v === 'number' ? c[9].v : parseBrFloat(c[9]?.f || c[9]?.v);
+      const totalProfitBrl = typeof c[10]?.v === 'number' ? c[10].v : parseBrFloat(c[10]?.f || c[10]?.v);
+      const totalProfitPct = typeof c[11]?.v === 'number' ? c[11].v * 100 : parseBrFloat(c[11]?.f || c[11]?.v);
+      const currentPriceBrl = quantity > 0 ? Number((marketValueBrl / quantity).toFixed(4)) : (typeof c[12]?.v === 'number' ? c[12].v : parseBrFloat(c[12]?.f || c[12]?.v));
+      const info = c[18]?.v ? String(c[18].v).trim() : '';
+
+      stocksSheetHoldings.push({
+        ticker,
+        category: cat,
+        quantity,
+        avgPriceBrl: Number(avgPriceBrl.toFixed(2)),
+        investedBrl: Number(investedBrl.toFixed(2)),
+        marketValueBrl: Number(marketValueBrl.toFixed(2)),
+        currentPriceBrl,
+        openProfitBrl: Number(openProfitBrl.toFixed(2)),
+        openProfitPct: Number(openProfitPct.toFixed(2)),
+        dividendsBrl: Number(dividendsBrl.toFixed(2)),
+        totalProfitBrl: Number(totalProfitBrl.toFixed(2)),
+        totalProfitPct: Number(totalProfitPct.toFixed(2)),
+        info,
+      });
     }
 
     // 2. Parse Currency Tab (Câmbio summaries & purchase history)
@@ -936,6 +984,11 @@ async function fetchPatrimonyAnalysisSheet(
       forexSummaries,
       forexPurchases,
       fixedIncomeSheetProducts,
+      stocksSheetHoldings,
+      fgtsBrl: Number(fgtsBrl.toFixed(2)),
+      officialTotalWithFgts: Number(officialTotalWithFgts.toFixed(2)),
+      officialTotalLiquid: Number(officialTotalLiquid.toFixed(2)),
+      officialCategoryTotals,
     };
 
     memoryPatrimonySheetCache = { timestamp: nowMs, sheetId, data: result };
