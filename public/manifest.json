@@ -1,0 +1,10 @@
+{
+  "name": "Patrimony Dashboard",
+  "short_name": "Patrimônio",
+  "description": "Personal Patrimony, Rentability & Investments Dashboard",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#111317",
+  "theme_color": "#111317",
+  "orientation": "portrait-primary"
+}
