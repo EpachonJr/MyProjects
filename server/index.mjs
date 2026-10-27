@@ -799,7 +799,8 @@ async function fetchPatrimonyAnalysisSheet(
       const openProfitPct = typeof c[7]?.v === 'number' ? c[7].v * 100 : parseBrFloat(c[7]?.f || c[7]?.v);
       const dividendsBrl = typeof c[8]?.v === 'number' ? c[8].v : parseBrFloat(c[8]?.f || c[8]?.v);
       const marketValueBrl = typeof c[9]?.v === 'number' ? c[9].v : parseBrFloat(c[9]?.f || c[9]?.v);
-      const totalProfitBrl = typeof c[10]?.v === 'number' ? c[10].v : parseBrFloat(c[10]?.f || c[10]?.v);
+      // Col 10 in sheet is Total Gross Return (Market Value + Dividends). Real total profit is Open Profit + Dividends.
+      const totalProfitBrl = Number((openProfitBrl + dividendsBrl).toFixed(2));
       const totalProfitPct = typeof c[11]?.v === 'number' ? c[11].v * 100 : parseBrFloat(c[11]?.f || c[11]?.v);
       const currentPriceBrl = quantity > 0 ? Number((marketValueBrl / quantity).toFixed(4)) : (typeof c[12]?.v === 'number' ? c[12].v : parseBrFloat(c[12]?.f || c[12]?.v));
       const info = c[18]?.v ? String(c[18].v).trim() : '';

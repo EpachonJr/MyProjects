@@ -656,9 +656,13 @@ export function App() {
                 openProfitBrl: sh.openProfitBrl,
                 openProfitPct: sh.openProfitPct,
                 dividendsBrl: sh.dividendsBrl || h.dividendsBrl,
-                totalProfitBrl:
-                  sh.totalProfitBrl ||
-                  Number((sh.openProfitBrl + (sh.dividendsBrl || h.dividendsBrl || 0)).toFixed(2)),
+                totalProfitBrl: Number(
+                  (
+                    sh.openProfitBrl +
+                    (sh.dividendsBrl || h.dividendsBrl || 0) +
+                    (h.tradesProfitBrl || 0)
+                  ).toFixed(2)
+                ),
               };
             });
 
