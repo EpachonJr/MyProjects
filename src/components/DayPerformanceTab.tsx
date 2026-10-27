@@ -97,6 +97,7 @@ function getMarketStatus(): { b3Open: boolean; usOpen: boolean } {
 
 export type HoldingsSortColumn =
   | 'ticker'
+  | 'name'
   | 'class'
   | 'quantity'
   | 'currentPrice'
@@ -159,6 +160,17 @@ export const DayPerformanceTab: React.FC<DayPerformanceTabProps> = ({
   const [sortDesc, setSortDesc] = useState(true);
   const [portSortBy, setPortSortBy] = useState<PortfoliosSortColumn>('marketValue');
   const [portSortDesc, setPortSortDesc] = useState(true);
+  const [accordionSortBy, setAccordionSortBy] = useState<HoldingsSortColumn>('totalReturnPct');
+  const [accordionSortDesc, setAccordionSortDesc] = useState(true);
+
+  const toggleAccordionSort = (col: HoldingsSortColumn) => {
+    if (accordionSortBy === col) {
+      setAccordionSortDesc(!accordionSortDesc);
+    } else {
+      setAccordionSortBy(col);
+      setAccordionSortDesc(col !== 'ticker' && col !== 'name');
+    }
+  };
 
   const { b3Open, usOpen } = useMemo(() => getMarketStatus(), []);
 
@@ -878,111 +890,302 @@ export const DayPerformanceTab: React.FC<DayPerformanceTabProps> = ({
                       </tr>
 
                       {/* Accordion / Expanded Assets of this Portfolio */}
-                      {isExpanded && (
-                        <tr>
-                          <td colSpan={9} className="p-0 bg-[#12141a]">
-                            <div className="p-4 border-y border-[#2b303b]/60">
-                              <div className="flex items-center justify-between mb-2.5 px-2">
-                                <span className="text-xs font-bold text-slate-300">
-                                  Ativos em {p.name} ({p.items.length})
-                                </span>
-                                <span className="text-[11px] text-slate-400">
-                                  Variação acumulada do grupo: {p.dayChangePct >= 0 ? '+' : ''}
-                                  {p.dayChangePct.toFixed(2)}%
-                                </span>
-                              </div>
-                              <div className="overflow-x-auto rounded-xl border border-[#2b303b]">
-                                <table className="w-full text-left text-xs whitespace-nowrap">
-                                  <thead className="bg-[#191c24] text-slate-400 border-b border-[#2b303b]">
-                                    <tr>
-                                      <th className="py-2.5 px-3 font-bold uppercase">Símbolo</th>
-                                      <th className="py-2.5 px-3 font-bold uppercase">Nome</th>
-                                      <th className="py-2.5 px-3 font-bold uppercase text-right">Qtd</th>
-                                      <th className="py-2.5 px-3 font-bold uppercase text-right">Preço</th>
-                                      <th className="py-2.5 px-3 font-bold uppercase text-right">Variação Dia (R$)</th>
-                                      <th className="py-2.5 px-3 font-bold uppercase text-right">Variação Dia (%)</th>
-                                      <th className="py-2.5 px-3 font-bold uppercase text-right">Valor Mercado</th>
-                                      <th className="py-2.5 px-3 font-bold uppercase text-right text-amber-300">Rentab. Total (%)</th>
-                                      <th className="py-2.5 px-3 font-bold uppercase text-right">Lucro Total</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-[#232732] bg-[#14161d]">
-                                    {p.items.map((it) => {
-                                      const itDayPos = (it.dailyChangeBrl ?? 0) >= 0;
-                                      const itProfPos = (it.openProfitBrl ?? 0) >= 0;
-                                      const itTotRetPct = getHoldingTotalReturnPct(it);
-                                      const itTotRetPos = itTotRetPct >= 0;
-                                      return (
-                                        <tr key={it.id} className="hover:bg-[#1c202a]">
-                                          <td className="py-2.5 px-3 font-extrabold text-amber-400">
-                                            {it.ticker}
-                                          </td>
-                                          <td className="py-2.5 px-3 text-slate-300 max-w-[180px] truncate">
-                                            {it.name}
-                                          </td>
-                                          <td className="py-2.5 px-3 text-right font-mono text-slate-300">
-                                            {it.quantity}
-                                          </td>
-                                          <td className="py-2.5 px-3 text-right font-mono text-slate-300">
-                                            {formatCurrency(it.currentPriceBrl, currency, ptax, hideValues)}
-                                          </td>
-                                          <td
-                                            className={`py-2.5 px-3 text-right font-mono font-bold ${
-                                              itDayPos ? 'text-emerald-400' : 'text-rose-400'
-                                            }`}
-                                          >
-                                            {itDayPos ? '+' : ''}
-                                            {formatCurrency(it.dailyChangeBrl ?? 0, currency, ptax, hideValues)}
-                                          </td>
-                                          <td
-                                            className={`py-2.5 px-3 text-right font-bold ${
-                                              itDayPos ? 'text-emerald-400' : 'text-rose-400'
-                                            }`}
-                                          >
-                                            <span
-                                              className={`px-1.5 py-0.5 rounded text-[11px] font-bold ${
-                                                itDayPos
-                                                  ? 'bg-emerald-500/10 text-emerald-400'
-                                                  : 'bg-rose-500/10 text-rose-400'
+                      {isExpanded && (() => {
+                        const sortedItems = [...p.items].sort((a, b) => {
+                          let cmp = 0;
+                          switch (accordionSortBy) {
+                            case 'ticker':
+                              cmp = a.ticker.localeCompare(b.ticker);
+                              break;
+                            case 'name':
+                              cmp = (a.name || '').localeCompare(b.name || '');
+                              break;
+                            case 'quantity':
+                              cmp = (a.quantity ?? 0) - (b.quantity ?? 0);
+                              break;
+                            case 'currentPrice':
+                              cmp = (a.currentPriceBrl ?? 0) - (b.currentPriceBrl ?? 0);
+                              break;
+                            case 'dailyBrl':
+                              cmp = (a.dailyChangeBrl ?? 0) - (b.dailyChangeBrl ?? 0);
+                              break;
+                            case 'dailyPct':
+                              cmp = (a.dailyChangePct ?? 0) - (b.dailyChangePct ?? 0);
+                              break;
+                            case 'marketValue':
+                              cmp = (a.marketValueBrl ?? 0) - (b.marketValueBrl ?? 0);
+                              break;
+                            case 'totalReturnPct':
+                              cmp = getHoldingTotalReturnPct(a) - getHoldingTotalReturnPct(b);
+                              break;
+                            case 'openProfitBrl':
+                              cmp = (a.openProfitBrl ?? 0) - (b.openProfitBrl ?? 0);
+                              break;
+                            default:
+                              cmp = 0;
+                          }
+                          return accordionSortDesc ? -cmp : cmp;
+                        });
+
+                        return (
+                          <tr>
+                            <td colSpan={9} className="p-0 bg-[#12141a]">
+                              <div className="p-4 border-y border-[#2b303b]/60">
+                                <div className="flex items-center justify-between mb-2.5 px-2">
+                                  <span className="text-xs font-bold text-slate-300">
+                                    Ativos em {p.name} ({p.items.length})
+                                  </span>
+                                  <span className="text-[11px] text-slate-400">
+                                    Variação acumulada do grupo: {p.dayChangePct >= 0 ? '+' : ''}
+                                    {p.dayChangePct.toFixed(2)}%
+                                  </span>
+                                </div>
+                                <div className="overflow-x-auto rounded-xl border border-[#2b303b]">
+                                  <table className="w-full text-left text-xs whitespace-nowrap">
+                                    <thead className="bg-[#191c24] text-slate-400 border-b border-[#2b303b]">
+                                      <tr>
+                                        <th
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            toggleAccordionSort('ticker');
+                                          }}
+                                          className={`py-2.5 px-3 font-bold uppercase cursor-pointer select-none transition-colors ${
+                                            accordionSortBy === 'ticker' ? 'text-amber-400 bg-[#212634]' : 'hover:text-white'
+                                          }`}
+                                        >
+                                          <div className="flex items-center gap-1.5">
+                                            Símbolo
+                                            {accordionSortBy === 'ticker' ? (
+                                              accordionSortDesc ? <ChevronDown className="w-3.5 h-3.5 text-amber-400" /> : <ChevronUp className="w-3.5 h-3.5 text-amber-400" />
+                                            ) : (
+                                              <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                                            )}
+                                          </div>
+                                        </th>
+                                        <th
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            toggleAccordionSort('name');
+                                          }}
+                                          className={`py-2.5 px-3 font-bold uppercase cursor-pointer select-none transition-colors ${
+                                            accordionSortBy === 'name' ? 'text-amber-400 bg-[#212634]' : 'hover:text-white'
+                                          }`}
+                                        >
+                                          <div className="flex items-center gap-1.5">
+                                            Nome
+                                            {accordionSortBy === 'name' ? (
+                                              accordionSortDesc ? <ChevronDown className="w-3.5 h-3.5 text-amber-400" /> : <ChevronUp className="w-3.5 h-3.5 text-amber-400" />
+                                            ) : (
+                                              <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                                            )}
+                                          </div>
+                                        </th>
+                                        <th
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            toggleAccordionSort('quantity');
+                                          }}
+                                          className={`py-2.5 px-3 font-bold uppercase text-right cursor-pointer select-none transition-colors ${
+                                            accordionSortBy === 'quantity' ? 'text-amber-400 bg-[#212634]' : 'hover:text-white'
+                                          }`}
+                                        >
+                                          <div className="flex items-center justify-end gap-1.5">
+                                            Qtd
+                                            {accordionSortBy === 'quantity' ? (
+                                              accordionSortDesc ? <ChevronDown className="w-3.5 h-3.5 text-amber-400" /> : <ChevronUp className="w-3.5 h-3.5 text-amber-400" />
+                                            ) : (
+                                              <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                                            )}
+                                          </div>
+                                        </th>
+                                        <th
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            toggleAccordionSort('currentPrice');
+                                          }}
+                                          className={`py-2.5 px-3 font-bold uppercase text-right cursor-pointer select-none transition-colors ${
+                                            accordionSortBy === 'currentPrice' ? 'text-amber-400 bg-[#212634]' : 'hover:text-white'
+                                          }`}
+                                        >
+                                          <div className="flex items-center justify-end gap-1.5">
+                                            Preço
+                                            {accordionSortBy === 'currentPrice' ? (
+                                              accordionSortDesc ? <ChevronDown className="w-3.5 h-3.5 text-amber-400" /> : <ChevronUp className="w-3.5 h-3.5 text-amber-400" />
+                                            ) : (
+                                              <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                                            )}
+                                          </div>
+                                        </th>
+                                        <th
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            toggleAccordionSort('dailyBrl');
+                                          }}
+                                          className={`py-2.5 px-3 font-bold uppercase text-right cursor-pointer select-none transition-colors ${
+                                            accordionSortBy === 'dailyBrl' ? 'text-amber-400 bg-[#212634]' : 'hover:text-white'
+                                          }`}
+                                        >
+                                          <div className="flex items-center justify-end gap-1.5">
+                                            Variação Dia (R$)
+                                            {accordionSortBy === 'dailyBrl' ? (
+                                              accordionSortDesc ? <ChevronDown className="w-3.5 h-3.5 text-amber-400" /> : <ChevronUp className="w-3.5 h-3.5 text-amber-400" />
+                                            ) : (
+                                              <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                                            )}
+                                          </div>
+                                        </th>
+                                        <th
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            toggleAccordionSort('dailyPct');
+                                          }}
+                                          className={`py-2.5 px-3 font-bold uppercase text-right cursor-pointer select-none transition-colors ${
+                                            accordionSortBy === 'dailyPct' ? 'text-amber-400 bg-[#212634]' : 'hover:text-white'
+                                          }`}
+                                        >
+                                          <div className="flex items-center justify-end gap-1.5">
+                                            Variação Dia (%)
+                                            {accordionSortBy === 'dailyPct' ? (
+                                              accordionSortDesc ? <ChevronDown className="w-3.5 h-3.5 text-amber-400" /> : <ChevronUp className="w-3.5 h-3.5 text-amber-400" />
+                                            ) : (
+                                              <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                                            )}
+                                          </div>
+                                        </th>
+                                        <th
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            toggleAccordionSort('marketValue');
+                                          }}
+                                          className={`py-2.5 px-3 font-bold uppercase text-right cursor-pointer select-none transition-colors ${
+                                            accordionSortBy === 'marketValue' ? 'text-amber-400 bg-[#212634]' : 'hover:text-white'
+                                          }`}
+                                        >
+                                          <div className="flex items-center justify-end gap-1.5">
+                                            Valor Mercado
+                                            {accordionSortBy === 'marketValue' ? (
+                                              accordionSortDesc ? <ChevronDown className="w-3.5 h-3.5 text-amber-400" /> : <ChevronUp className="w-3.5 h-3.5 text-amber-400" />
+                                            ) : (
+                                              <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                                            )}
+                                          </div>
+                                        </th>
+                                        <th
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            toggleAccordionSort('totalReturnPct');
+                                          }}
+                                          className={`py-2.5 px-3 font-bold uppercase text-right cursor-pointer select-none transition-colors ${
+                                            accordionSortBy === 'totalReturnPct' ? 'text-amber-400 bg-[#212634]' : 'hover:text-white'
+                                          }`}
+                                        >
+                                          <div className="flex items-center justify-end gap-1.5">
+                                            <span className="text-amber-300">Rentab. Total (%)</span>
+                                            {accordionSortBy === 'totalReturnPct' ? (
+                                              accordionSortDesc ? <ChevronDown className="w-3.5 h-3.5 text-amber-400" /> : <ChevronUp className="w-3.5 h-3.5 text-amber-400" />
+                                            ) : (
+                                              <ArrowUpDown className="w-3 h-3 text-amber-400/70" />
+                                            )}
+                                          </div>
+                                        </th>
+                                        <th
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            toggleAccordionSort('openProfitBrl');
+                                          }}
+                                          className={`py-2.5 px-3 font-bold uppercase text-right cursor-pointer select-none transition-colors ${
+                                            accordionSortBy === 'openProfitBrl' ? 'text-amber-400 bg-[#212634]' : 'hover:text-white'
+                                          }`}
+                                        >
+                                          <div className="flex items-center justify-end gap-1.5">
+                                            Lucro Total
+                                            {accordionSortBy === 'openProfitBrl' ? (
+                                              accordionSortDesc ? <ChevronDown className="w-3.5 h-3.5 text-amber-400" /> : <ChevronUp className="w-3.5 h-3.5 text-amber-400" />
+                                            ) : (
+                                              <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                                            )}
+                                          </div>
+                                        </th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-[#232732] bg-[#14161d]">
+                                      {sortedItems.map((it) => {
+                                        const itDayPos = (it.dailyChangeBrl ?? 0) >= 0;
+                                        const itProfPos = (it.openProfitBrl ?? 0) >= 0;
+                                        const itTotRetPct = getHoldingTotalReturnPct(it);
+                                        const itTotRetPos = itTotRetPct >= 0;
+                                        return (
+                                          <tr key={it.id} className="hover:bg-[#1c202a]">
+                                            <td className="py-2.5 px-3 font-extrabold text-amber-400">
+                                              {it.ticker}
+                                            </td>
+                                            <td className="py-2.5 px-3 text-slate-300 max-w-[180px] truncate">
+                                              {it.name}
+                                            </td>
+                                            <td className="py-2.5 px-3 text-right font-mono text-slate-300">
+                                              {it.quantity}
+                                            </td>
+                                            <td className="py-2.5 px-3 text-right font-mono text-slate-300">
+                                              {formatCurrency(it.currentPriceBrl, currency, ptax, hideValues)}
+                                            </td>
+                                            <td
+                                              className={`py-2.5 px-3 text-right font-mono font-bold ${
+                                                itDayPos ? 'text-emerald-400' : 'text-rose-400'
                                               }`}
                                             >
                                               {itDayPos ? '+' : ''}
-                                              {(it.dailyChangePct ?? 0).toFixed(2)}%
-                                            </span>
-                                          </td>
-                                          <td className="py-2.5 px-3 text-right font-mono font-bold text-white">
-                                            {formatCurrency(it.marketValueBrl, currency, ptax, hideValues)}
-                                          </td>
-                                          <td className="py-2.5 px-3 text-right font-bold">
-                                            <span
-                                              className={`inline-block px-2 py-0.5 rounded-lg text-xs font-black ${
-                                                itTotRetPos
-                                                  ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-                                                  : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+                                              {formatCurrency(it.dailyChangeBrl ?? 0, currency, ptax, hideValues)}
+                                            </td>
+                                            <td
+                                              className={`py-2.5 px-3 text-right font-bold ${
+                                                itDayPos ? 'text-emerald-400' : 'text-rose-400'
                                               }`}
                                             >
-                                              {itTotRetPos ? '+' : ''}
-                                              {itTotRetPct.toFixed(2)}%
-                                            </span>
-                                          </td>
-                                          <td
-                                            className={`py-2.5 px-3 text-right font-mono font-bold ${
-                                              itProfPos ? 'text-emerald-400' : 'text-rose-400'
-                                            }`}
-                                          >
-                                            {itProfPos ? '+' : ''}
-                                            {formatCurrency(it.openProfitBrl, currency, ptax, hideValues)}
-                                          </td>
-                                        </tr>
-                                      );
-                                    })}
-                                  </tbody>
-                                </table>
+                                              <span
+                                                className={`px-1.5 py-0.5 rounded text-[11px] font-bold ${
+                                                  itDayPos
+                                                    ? 'bg-emerald-500/10 text-emerald-400'
+                                                    : 'bg-rose-500/10 text-rose-400'
+                                                }`}
+                                              >
+                                                {itDayPos ? '+' : ''}
+                                                {(it.dailyChangePct ?? 0).toFixed(2)}%
+                                              </span>
+                                            </td>
+                                            <td className="py-2.5 px-3 text-right font-mono font-bold text-white">
+                                              {formatCurrency(it.marketValueBrl, currency, ptax, hideValues)}
+                                            </td>
+                                            <td className="py-2.5 px-3 text-right font-bold">
+                                              <span
+                                                className={`inline-block px-2 py-0.5 rounded-lg text-xs font-black ${
+                                                  itTotRetPos
+                                                    ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                                                    : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+                                                }`}
+                                              >
+                                                {itTotRetPos ? '+' : ''}
+                                                {itTotRetPct.toFixed(2)}%
+                                              </span>
+                                            </td>
+                                            <td
+                                              className={`py-2.5 px-3 text-right font-mono font-bold ${
+                                                itProfPos ? 'text-emerald-400' : 'text-rose-400'
+                                              }`}
+                                            >
+                                              {itProfPos ? '+' : ''}
+                                              {formatCurrency(it.openProfitBrl, currency, ptax, hideValues)}
+                                            </td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
+                                </div>
                               </div>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
+                            </td>
+                          </tr>
+                        );
+                      })()}
                     </React.Fragment>
                   );
                 })}

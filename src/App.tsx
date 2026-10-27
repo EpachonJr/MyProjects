@@ -404,31 +404,15 @@ export function App() {
                 ? sp.monthlyHistory
                 : prod.monthlyHistory;
 
-            // Detect if the user recorded a new Aporte or Resgate in the Fixed Income sheet
-            const deltaInvested = Number((sp.totalInvestedBrl - prod.totalInvestedBrl).toFixed(2));
-            if (Math.abs(deltaInvested) > 0.05) {
-              const newMarket = Number(
-                Math.max(sp.marketValueBrl, prod.marketValueBrl + deltaInvested).toFixed(2)
-              );
-              const newProfit = Number((newMarket - sp.totalInvestedBrl).toFixed(2));
-              const newRentPct =
-                sp.totalInvestedBrl > 0
-                  ? Number(((newProfit / sp.totalInvestedBrl) * 100).toFixed(2))
-                  : 0;
-              return {
-                ...prod,
-                initialDepositBrl: sp.initialDepositBrl || prod.initialDepositBrl,
-                totalInvestedBrl: sp.totalInvestedBrl,
-                marketValueBrl: newMarket,
-                absoluteProfitBrl: newProfit,
-                rentabilityPct: newRentPct,
-                netValueBrl: Number((newMarket - (prod.taxesAndFeesBrl || 0)).toFixed(2)),
-                monthlyHistory: nextMonthlyHistory,
-              };
-            }
-
+            // In all cases, sync latest market value and invested directly from the sheet
             return {
               ...prod,
+              initialDepositBrl: sp.initialDepositBrl || prod.initialDepositBrl,
+              totalInvestedBrl: sp.totalInvestedBrl,
+              marketValueBrl: sp.marketValueBrl,
+              absoluteProfitBrl: sp.absoluteProfitBrl,
+              rentabilityPct: sp.rentabilityPct,
+              netValueBrl: Number((sp.marketValueBrl - (prod.taxesAndFeesBrl || 0)).toFixed(2)),
               monthlyHistory: nextMonthlyHistory,
             };
           });
@@ -567,8 +551,9 @@ export function App() {
             };
           }
 
-          // C) TESOURO_DIRETO products (Mark-to-market PU × Quantity)
+          // C) TESOURO_DIRETO products (Mark-to-market PU × Quantity, only if not synced from official spreadsheet)
           if (
+            !patLive &&
             prod.automationType === 'TESOURO_DIRETO' &&
             prod.tesouroBondType &&
             prod.tesouroMaturity &&
@@ -631,11 +616,17 @@ export function App() {
           }
 
           const preservedHoldings = currentHoldings
-            .filter(
-              (h) =>
-                h.assetClass !== 'FIXED_INCOME' &&
-                !(h.assetClass === 'PROTECTION' && ['USD', 'GBP', 'EUR', 'CHF'].includes(h.ticker))
-            )
+            .filter((h) => {
+              if (h.assetClass === 'FIXED_INCOME') return false;
+              if (h.assetClass === 'PROTECTION' && ['USD', 'GBP', 'EUR', 'CHF'].includes(h.ticker)) return false;
+              // If tradeable asset is no longer in sheetStocksMap, the user liquidated/sold it in the spreadsheet
+              if (['STOCKS_BR', 'STOCKS_US', 'ETFS_US', 'FIIS', 'CRYPTO'].includes(h.assetClass)) {
+                if (sheetStocksMap.size > 0 && !sheetStocksMap.has(h.ticker.toUpperCase())) {
+                  return false;
+                }
+              }
+              return true;
+            })
             .map((h) => {
               if (h.assetClass === 'FGTS') {
                 const fgtsVal =
@@ -676,7 +667,19 @@ export function App() {
             .filter((fp) => fp.status !== 'WITHDRAWN' && fp.marketValueBrl > 0)
             .map((fp) => {
               const existingFi = existingById.get(fp.holdingId);
-              if (existingFi) return existingFi;
+              if (existingFi) {
+                return {
+                  ...existingFi,
+                  currentPriceBrl: fp.marketValueBrl,
+                  investedBrl: fp.totalInvestedBrl,
+                  marketValueBrl: fp.marketValueBrl,
+                  avgPriceBrl: fp.totalInvestedBrl,
+                  netValueBrl: fp.netValueBrl ?? fp.marketValueBrl,
+                  openProfitBrl: fp.absoluteProfitBrl,
+                  openProfitPct: fp.rentabilityPct,
+                  totalProfitBrl: fp.absoluteProfitBrl,
+                };
+              }
             return {
               id: fp.holdingId,
               ticker: fp.name.slice(0, 14).toUpperCase(),
