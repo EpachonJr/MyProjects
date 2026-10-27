@@ -842,14 +842,18 @@ export function App() {
             if (!q || typeof q.priceBrl !== 'number' || q.priceBrl <= 0) return h;
 
             // Preserve the base valuation from the spreadsheet (1:1 exact parity)!
-            // Quotes from Yahoo Finance only provide the intraday change % and daily change R$.
+            // Standard financial formula: (Current Price - Previous Close) * Quantity
             const dailyChangePct = q.changePct ?? h.dailyChangePct;
-            const dailyChangeBrl = Number(((h.marketValueBrl * dailyChangePct) / 100).toFixed(2));
+            const hasPrevClose = typeof q.prevCloseBrl === 'number' && q.prevCloseBrl > 0;
+            const dailyChangeBrl =
+              hasPrevClose && h.quantity > 0
+                ? Number(((q.priceBrl - q.prevCloseBrl) * h.quantity).toFixed(2))
+                : Number(((h.marketValueBrl * dailyChangePct) / 100).toFixed(2));
 
             return {
               ...h,
               dailyChangePct,
-              dailyChangeBrl: q.changePct !== undefined ? dailyChangeBrl : h.dailyChangeBrl,
+              dailyChangeBrl,
             };
           })
         );
