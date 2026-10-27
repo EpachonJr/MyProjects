@@ -666,6 +666,62 @@ export function App() {
               };
             });
 
+          // Append any newly acquired or converted holdings from the Stocks sheet (e.g. SNME11 from merger)
+          const existingPreservedTickers = new Set(preservedHoldings.map((h) => h.ticker.toUpperCase()));
+          if (Array.isArray(patLive.stocksSheetHoldings)) {
+            for (const sh of patLive.stocksSheetHoldings) {
+              const sym = String(sh.ticker || '').trim().toUpperCase();
+              if (sym && !existingPreservedTickers.has(sym)) {
+                existingPreservedTickers.add(sym);
+                const cat = String(sh.category || '').trim();
+                let assetClass: AssetClass = 'FIIS';
+                let macroGroup: 'Cash on Hand' | 'Stocks (US)' | 'ETFs (US)' | 'Stocks (BRA)' | 'FIIs' | 'Cryptocurrency' | 'Protection' | 'FGTS' = 'FIIs';
+                if (cat.includes('Stocks BR')) {
+                  assetClass = 'STOCKS_BR';
+                  macroGroup = 'Stocks (BRA)';
+                } else if (cat.includes('Stocks US')) {
+                  assetClass = 'STOCKS_US';
+                  macroGroup = 'Stocks (US)';
+                } else if (cat.includes('ETFs US')) {
+                  assetClass = 'ETFS_US';
+                  macroGroup = 'ETFs (US)';
+                } else if (cat.includes('Crypto')) {
+                  assetClass = 'CRYPTO';
+                  macroGroup = 'Cryptocurrency';
+                } else if (cat.includes('Protection')) {
+                  assetClass = 'PROTECTION';
+                  macroGroup = 'Protection';
+                }
+
+                preservedHoldings.push({
+                  id: `fii-${sym.toLowerCase()}`,
+                  ticker: sym,
+                  name: sym === 'SNME11' ? 'Suno Multiestratégia Imobiliário FII' : sym,
+                  assetClass,
+                  macroGroup,
+                  broker: 'XP',
+                  quantity: sh.quantity,
+                  avgPriceBrl: sh.avgPriceBrl,
+                  currentPriceBrl: sh.currentPriceBrl,
+                  investedBrl: sh.investedBrl,
+                  marketValueBrl: sh.marketValueBrl,
+                  dailyChangeBrl: 0,
+                  dailyChangePct: 0,
+                  openProfitBrl: sh.openProfitBrl,
+                  openProfitPct: sh.openProfitPct,
+                  tradesProfitBrl: 0,
+                  dividendsBrl: sh.dividendsBrl || 0,
+                  totalProfitBrl: Number((sh.openProfitBrl + (sh.dividendsBrl || 0)).toFixed(2)),
+                  tirMonthlyPct: 0.8,
+                  tirAnnualPct: 10.0,
+                  sector: assetClass === 'FIIS' ? 'Fundos Imobiliários' : 'Renda Variável',
+                  riskLevel: 'Medium',
+                  info: `${sym} incorporado via fusão / atualização de carteira.`,
+                });
+              }
+            }
+          }
+
           // A) Automated Fixed Income holdings (Active custody only; withdrawn products are kept in fixedIncomeProducts)
           const fiHoldings: Holding[] = updatedFiProducts
             .filter((fp) => fp.status !== 'WITHDRAWN' && fp.marketValueBrl > 0)
