@@ -232,6 +232,8 @@ export function App() {
   holdingsRef.current = holdings;
   const fixedIncomeRef = useRef(fixedIncomeProducts);
   fixedIncomeRef.current = fixedIncomeProducts;
+  const monthlyPerformanceRef = useRef(monthlyPerformance);
+  monthlyPerformanceRef.current = monthlyPerformance;
 
   // Keep a stable snapshot ref of all state slices so callbacks never re-trigger effects in a loop
   const stateSnapshotRef = useRef({
@@ -266,6 +268,7 @@ export function App() {
     async (nextState: {
       holdings?: Holding[];
       allocationGoals?: AllocationGoal[];
+      monthlyPerformance?: MonthlyPerformanceRow[];
       fixedIncomeProducts?: FixedIncomeProductSummary[];
       transactions?: TransactionRecord[];
       recentDividends?: DividendRecord[];
@@ -279,7 +282,7 @@ export function App() {
       const payload = {
         holdings: nextState.holdings ?? holdingsRef.current,
         allocationGoals: nextState.allocationGoals ?? snap.allocationGoals,
-        monthlyPerformance: snap.monthlyPerformance,
+        monthlyPerformance: nextState.monthlyPerformance ?? snap.monthlyPerformance,
         fixedIncomeProducts: nextState.fixedIncomeProducts ?? fixedIncomeRef.current,
         transactions: nextState.transactions ?? snap.transactions,
         recentDividends: nextState.recentDividends ?? snap.recentDividends,
@@ -885,6 +888,36 @@ export function App() {
         holdingsRef.current = updatedHoldings;
         setHoldings(updatedHoldings);
         setLastLiveUpdate(new Date().toLocaleTimeString('pt-BR'));
+
+        // 5. Sync Monthly Performance automatically for current/new months (e.g. 2026-10 onwards)
+        let nextMonthlyPerf = monthlyPerformanceRef.current;
+        try {
+          const mRes = await fetch('/api/monthly-performance', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              holdings: updatedHoldings,
+              fromMonth: '2026-10',
+              dividends: nextDividends,
+            }),
+          });
+          if (mRes.ok) {
+            const mData = await mRes.json();
+            if (mData.ok && Array.isArray(mData.rows) && mData.rows.length > 0) {
+              const rowMap = new Map<string, MonthlyPerformanceRow>();
+              for (const r of nextMonthlyPerf) {
+                rowMap.set(r.month, r);
+              }
+              for (const nr of mData.rows) {
+                rowMap.set(nr.month, nr);
+              }
+              nextMonthlyPerf = Array.from(rowMap.values()).sort((a, b) => a.month.localeCompare(b.month));
+              monthlyPerformanceRef.current = nextMonthlyPerf;
+              setMonthlyPerformance(nextMonthlyPerf);
+            }
+          }
+        } catch {}
+
         persistState({
           holdings: updatedHoldings,
           fixedIncomeProducts: updatedFiProducts,
@@ -892,6 +925,7 @@ export function App() {
           recentDividends: nextDividends,
           forexPurchases: nextForexPurchases,
           forexSummaries: nextForexSummaries,
+          monthlyPerformance: nextMonthlyPerf,
           ptax: liveUsd,
         });
       }

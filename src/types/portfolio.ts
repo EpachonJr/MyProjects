@@ -86,6 +86,11 @@ export interface MonthlyPerformanceRow {
   dowJonesBrlPct: number;
   ifixPct: number;
   usdBrlPct: number;
+  /** 'SEED' = histórico fixo; 'AUTO' = calculado automaticamente via Yahoo Finance / BCB */
+  source?: 'SEED' | 'AUTO';
+  /** true quando o mês ainda está em andamento (valor parcial, recalculado a cada sync) */
+  isPartial?: boolean;
+  computedAt?: string;
 }
 
 export interface FixedIncomeSubTranche {

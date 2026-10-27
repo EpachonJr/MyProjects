@@ -87,6 +87,10 @@ export const RentabilityTab: React.FC<RentabilityTabProps> = ({
   currency,
   onCurrencyChange,
 }) => {
+  const latestAvailableMonth = useMemo(() => {
+    return monthlyPerformance[monthlyPerformance.length - 1]?.month || '2026-10';
+  }, [monthlyPerformance]);
+
   const [preset, setPreset] = useState<RentabilityFilterConfig['preset']>('ALL_WITH_FIXED_INCOME');
   const [selectedClasses, setSelectedClasses] = useState<AssetClass[]>([
     'FIXED_INCOME',
@@ -101,7 +105,20 @@ export const RentabilityTab: React.FC<RentabilityTabProps> = ({
   const [deflateIpca, setDeflateIpca] = useState(false);
   const [periodPreset, setPeriodPreset] = useState<'ALL' | '24M' | '12M' | '6M' | 'YTD'>('ALL');
   const [startMonth, setStartMonth] = useState('2019-11');
-  const [endMonth, setEndMonth] = useState('2026-09');
+  const [endMonth, setEndMonth] = useState(() => {
+    return monthlyPerformance[monthlyPerformance.length - 1]?.month || '2026-10';
+  });
+
+  // Keep endMonth tracked to latest available month as live sync brings in current/new months
+  const prevLatestRef = useRef(latestAvailableMonth);
+  useEffect(() => {
+    if (latestAvailableMonth !== prevLatestRef.current) {
+      if (endMonth === prevLatestRef.current || endMonth === '2026-09') {
+        setEndMonth(latestAvailableMonth);
+      }
+      prevLatestRef.current = latestAvailableMonth;
+    }
+  }, [latestAvailableMonth, endMonth]);
 
   // Dropdown open states
   const [classesDropdownOpen, setClassesDropdownOpen] = useState(false);
@@ -173,12 +190,20 @@ export const RentabilityTab: React.FC<RentabilityTabProps> = ({
 
   const handlePeriodPreset = (p: 'ALL' | '24M' | '12M' | '6M' | 'YTD') => {
     setPeriodPreset(p);
-    setEndMonth('2026-09');
-    if (p === 'ALL') setStartMonth('2019-11');
-    else if (p === '24M') setStartMonth('2024-10');
-    else if (p === '12M') setStartMonth('2025-10');
-    else if (p === '6M') setStartMonth('2026-04');
-    else if (p === 'YTD') setStartMonth('2026-01');
+    setEndMonth(latestAvailableMonth);
+    const [latestY, latestM] = latestAvailableMonth.split('-').map(Number);
+    if (p === 'ALL') {
+      setStartMonth('2019-11');
+    } else if (p === 'YTD') {
+      setStartMonth(`${latestY}-01`);
+    } else {
+      const monthsBack = p === '24M' ? 24 : p === '12M' ? 12 : 6;
+      const totalM = latestY * 12 + (latestM - 1) - monthsBack + 1;
+      const sy = Math.floor(totalM / 12);
+      const sm = (totalM % 12) + 1;
+      const sMonth = `${sy}-${String(sm).padStart(2, '0')}`;
+      setStartMonth(sMonth < '2019-11' ? '2019-11' : sMonth);
+    }
   };
 
   const filterConfig: RentabilityFilterConfig = useMemo(

@@ -473,7 +473,7 @@ function mapSpreadsheetClassToDashboard(ticker, rawClass) {
   return { assetClass: 'STOCKS_BR', macroGroup: 'Stocks (BRA)' };
 }
 
-const SHEET_DAILY_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours (once per day)
+const SHEET_DAILY_TTL_MS = 10 * 60 * 1000; // 10 minutes (keeps the app in sync with the spreadsheets)
 
 let memoryGoogleSheetsCache = {
   timestamp: 0,
@@ -1032,6 +1032,292 @@ async function fetchPatrimonyAnalysisSheet(
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Automatic Monthly Performance Engine
+// Computes monthly returns (per asset class + benchmarks) for every month after the
+// last historical row, so the "Comparação ano a ano" table never stops at a fixed month.
+// ─────────────────────────────────────────────────────────────────────────────
+function monthKeyFromDate(d) {
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+function listMonths(fromMonth, toMonth) {
+  const out = [];
+  let [y, m] = fromMonth.split('-').map(Number);
+  const [ty, tm] = toMonth.split('-').map(Number);
+  while (y < ty || (y === ty && m <= tm)) {
+    out.push(`${y}-${String(m).padStart(2, '0')}`);
+    m += 1;
+    if (m > 12) { m = 1; y += 1; }
+  }
+  return out;
+}
+
+function prevMonthKey(month) {
+  let [y, m] = month.split('-').map(Number);
+  m -= 1;
+  if (m < 1) { m = 12; y -= 1; }
+  return `${y}-${String(m).padStart(2, '0')}`;
+}
+
+const dailySeriesCache = new Map(); // symbol -> { ts, fromSec, points: [{ month, day, close }] }
+
+async function fetchYahooDailySeries(yahooSymbol, fromSec) {
+  const cached = dailySeriesCache.get(yahooSymbol);
+  if (cached && cached.fromSec <= fromSec && Date.now() - cached.ts < 15 * 60 * 1000) return cached.points;
+  try {
+    const p2 = Math.floor(Date.now() / 1000) + 3600;
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?period1=${fromSec}&period2=${p2}&interval=1d`;
+    const resp = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!resp.ok) return null;
+    const json = await resp.json();
+    const r = json?.chart?.result?.[0];
+    const ts = r?.timestamp || [];
+    const closes = r?.indicators?.quote?.[0]?.close || [];
+    const points = [];
+    for (let i = 0; i < ts.length; i++) {
+      const c = closes[i];
+      if (typeof c !== 'number' || !Number.isFinite(c) || c <= 0) continue;
+      const d = new Date(ts[i] * 1000);
+      points.push({ month: monthKeyFromDate(d), day: d.toISOString().slice(0, 10), close: c });
+    }
+    // Live price for the current session (regularMarketPrice) overrides last close if newer
+    const live = r?.meta?.regularMarketPrice;
+    if (typeof live === 'number' && live > 0 && points.length > 0) {
+      points[points.length - 1] = { ...points[points.length - 1], close: live };
+    }
+    const meta = { currency: r?.meta?.currency || 'USD' };
+    points.meta = meta;
+    dailySeriesCache.set(yahooSymbol, { ts: Date.now(), fromSec, points });
+    return points;
+  } catch {
+    return null;
+  }
+}
+
+// Last close of a given month (or null)
+function closeAtMonthEnd(points, month) {
+  if (!points) return null;
+  let last = null;
+  for (const p of points) {
+    if (p.month <= month) last = p.close;
+    else break;
+  }
+  return last;
+}
+
+function hasDataInMonth(points, month) {
+  return Boolean(points && points.some((p) => p.month === month));
+}
+
+async function fetchBcbMonthlySeries(serie, count = 18) {
+  try {
+    const resp = await fetch(
+      `https://api.bcb.gov.br/dados/serie/bcdata.sgs.${serie}/dados/ultimos/${count}?formato=json`,
+      { signal: AbortSignal.timeout(6000) }
+    );
+    if (!resp.ok) return {};
+    const rows = await resp.json();
+    const out = {};
+    for (const r of rows || []) {
+      const parts = String(r.data || '').split('/');
+      if (parts.length !== 3) continue;
+      const v = parseFloat(r.valor);
+      if (!Number.isNaN(v)) out[`${parts[2]}-${parts[1]}`] = v;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+async function computeMonthlyPerformance({ holdings = [], fromMonth, dividends = [] }) {
+  const nowMonth = monthKeyFromDate(new Date());
+  if (!fromMonth || !/^\d{4}-\d{2}$/.test(fromMonth) || fromMonth > nowMonth) fromMonth = nowMonth;
+  const months = listMonths(fromMonth, nowMonth);
+  const baseMonth = prevMonthKey(fromMonth);
+  const [by, bm] = baseMonth.split('-').map(Number);
+  // Start a few days before the base month ends so we always have its closing price
+  const fromSec = Math.floor(Date.UTC(by, bm - 1, 1) / 1000);
+
+  const VAR_CLASSES = ['STOCKS_BR', 'STOCKS_US', 'ETFS_US', 'FIIS', 'CRYPTO', 'PROTECTION'];
+  const valid = (Array.isArray(holdings) ? holdings : []).filter(
+    (h) => h && h.ticker && VAR_CLASSES.includes(h.assetClass) && Number(h.quantity) > 0
+  );
+
+  const benchSymbols = {
+    USDBRL: 'BRL=X',
+    IBOV: '^BVSP',
+    SP500: '^GSPC',
+    NASDAQ: '^IXIC',
+    DOW: '^DJI',
+    IFIX: 'XFIX11.SA', // ETF que replica o IFIX (índice não disponível no Yahoo)
+  };
+
+  const holdingSymbols = new Map();
+  for (const h of valid) {
+    holdingSymbols.set(h.ticker, mapTickerToYahoo(h.ticker, h.assetClass, h.broker));
+  }
+
+  const allSymbols = Array.from(new Set([...Object.values(benchSymbols), ...holdingSymbols.values()]));
+  const seriesBySymbol = {};
+  const chunk = 10;
+  for (let i = 0; i < allSymbols.length; i += chunk) {
+    const batch = allSymbols.slice(i, i + chunk);
+    const results = await Promise.all(batch.map((s) => fetchYahooDailySeries(s, fromSec)));
+    batch.forEach((s, idx) => { seriesBySymbol[s] = results[idx]; });
+  }
+
+  const [cdiMonthly, ipcaMonthly, patSheet] = await Promise.all([
+    fetchBcbMonthlySeries(4391),
+    fetchBcbMonthlySeries(433),
+    fetchPatrimonyAnalysisSheet().catch(() => null),
+  ]);
+
+  const usdSeries = seriesBySymbol[benchSymbols.USDBRL];
+  const fxAt = (month) => closeAtMonthEnd(usdSeries, month) || 5.2;
+
+  const isBrlSymbol = (sym) => sym.endsWith('.SA') || sym.endsWith('BRL=X') || sym === 'BRL=X';
+
+  // Value of a set of holdings at month-end, in BRL
+  const valueAt = (list, month) => {
+    let total = 0;
+    let missing = false;
+    for (const h of list) {
+      const sym = holdingSymbols.get(h.ticker);
+      const close = closeAtMonthEnd(seriesBySymbol[sym], month);
+      if (close === null) { missing = true; continue; }
+      const px = isBrlSymbol(sym) ? close : close * fxAt(month);
+      total += Number(h.quantity) * px;
+    }
+    return { total, missing };
+  };
+
+  const divsByMonthClass = {};
+  for (const d of Array.isArray(dividends) ? dividends : []) {
+    if (!d || !d.date || !(d.netValueBrl > 0)) continue;
+    const m = String(d.date).slice(0, 7);
+    const cls =
+      d.assetClass === 'FII' ? 'FIIS'
+        : d.assetClass === 'AÇÃO' || d.assetClass === 'ACAO' ? 'STOCKS_BR'
+          : d.assetClass === 'ETF_US' ? 'ETFS_US'
+            : 'STOCKS_US';
+    divsByMonthClass[`${m}|${cls}`] = (divsByMonthClass[`${m}|${cls}`] || 0) + d.netValueBrl;
+  }
+
+  const classReturn = (classes, month) => {
+    const list = valid.filter((h) => classes.includes(h.assetClass));
+    // Only use holdings that have prices on both month-ends
+    const usable = list.filter((h) => {
+      const sym = holdingSymbols.get(h.ticker);
+      return closeAtMonthEnd(seriesBySymbol[sym], prevMonthKey(month)) !== null &&
+        closeAtMonthEnd(seriesBySymbol[sym], month) !== null;
+    });
+    const start = valueAt(usable, prevMonthKey(month)).total;
+    const end = valueAt(usable, month).total;
+    if (start <= 0) return { pct: 0, start: 0 };
+    let divs = 0;
+    for (const c of classes) divs += divsByMonthClass[`${month}|${c}`] || 0;
+    return { pct: ((end + divs) / start - 1) * 100, start };
+  };
+
+  const idxReturn = (sym, month) => {
+    const s = seriesBySymbol[sym];
+    const a = closeAtMonthEnd(s, prevMonthKey(month));
+    const b = closeAtMonthEnd(s, month);
+    return a && b && hasDataInMonth(s, month) ? (b / a - 1) * 100 : 0;
+  };
+
+  // Fixed income: weighted monthly return from the "Fixed Income" tab, fallback to CDI
+  const fiReturn = (month) => {
+    const prods = patSheet?.fixedIncomeSheetProducts || [];
+    let w = 0;
+    let acc = 0;
+    for (const p of prods) {
+      const hist = p.monthlyHistory || [];
+      const cur = hist.find((x) => x.month === month);
+      const prev = hist.find((x) => x.month === prevMonthKey(month));
+      if (!cur || !prev || !(prev.marketValueBrl > 0)) continue;
+      if (typeof cur.monthlyReturnPct !== 'number') continue;
+      w += prev.marketValueBrl;
+      acc += prev.marketValueBrl * cur.monthlyReturnPct;
+    }
+    if (w > 0) return acc / w;
+    return cdiMonthly[month] ?? 0;
+  };
+
+  // Current weights from live holdings (fixed income share comes from the spreadsheet totals)
+  const totalVar = valueAt(valid, nowMonth).total;
+  const cats = patSheet?.officialCategoryTotals || {};
+  const fiTotal = Number(cats['Cash on Hand'] || 0);
+  const grand = totalVar + fiTotal;
+  const wOf = (classes) => {
+    if (grand <= 0) return 0;
+    return valueAt(valid.filter((h) => classes.includes(h.assetClass)), nowMonth).total / grand;
+  };
+  const weights = {
+    FIXED_INCOME: grand > 0 ? fiTotal / grand : 0.5,
+    STOCKS_BR: wOf(['STOCKS_BR']),
+    STOCKS_US: wOf(['STOCKS_US']),
+    ETFS_US: wOf(['ETFS_US']),
+    FIIS: wOf(['FIIS']),
+    CRYPTO: wOf(['CRYPTO']),
+    PROTECTION: wOf(['PROTECTION']),
+  };
+  for (const k of Object.keys(weights)) weights[k] = Number(weights[k].toFixed(4));
+
+  const r2 = (v) => Number((Number.isFinite(v) ? v : 0).toFixed(2));
+  const computedAt = new Date().toISOString();
+
+  const rows = months.map((month) => {
+    const [y, m] = month.split('-').map(Number);
+    const ptax = fxAt(month);
+    const prevPtax = fxAt(prevMonthKey(month));
+    const usdBrlPct = prevPtax > 0 ? (ptax / prevPtax - 1) * 100 : 0;
+    const fx = 1 + usdBrlPct / 100;
+    const sp500UsdPct = idxReturn(benchSymbols.SP500, month);
+    const nasdaqUsdPct = idxReturn(benchSymbols.NASDAQ, month);
+    const dowJonesUsdPct = idxReturn(benchSymbols.DOW, month);
+    const fiPct = fiReturn(month);
+
+    return {
+      month,
+      year: y,
+      monthIndex: m,
+      ptax: Number(ptax.toFixed(4)),
+      equitiesStatusInvestPct: r2(classReturn(['STOCKS_BR', 'STOCKS_US', 'ETFS_US', 'FIIS'], month).pct),
+      fixedIncomePct: r2(fiPct),
+      tesouroPct: r2(fiPct),
+      stocksBrPct: r2(classReturn(['STOCKS_BR'], month).pct),
+      stocksUsPct: r2(classReturn(['STOCKS_US'], month).pct),
+      etfsUsPct: r2(classReturn(['ETFS_US'], month).pct),
+      fiisPct: r2(classReturn(['FIIS'], month).pct),
+      cryptoPct: r2(classReturn(['CRYPTO'], month).pct),
+      protectionPct: r2(classReturn(['PROTECTION'], month).pct),
+      weights,
+      cdiPct: r2(cdiMonthly[month] ?? 0),
+      ipcaPct: r2(ipcaMonthly[month] ?? 0),
+      ibovPct: r2(idxReturn(benchSymbols.IBOV, month)),
+      sp500UsdPct: r2(sp500UsdPct),
+      sp500BrlPct: r2(((1 + sp500UsdPct / 100) * fx - 1) * 100),
+      nasdaqUsdPct: r2(nasdaqUsdPct),
+      nasdaqBrlPct: r2(((1 + nasdaqUsdPct / 100) * fx - 1) * 100),
+      dowJonesUsdPct: r2(dowJonesUsdPct),
+      dowJonesBrlPct: r2(((1 + dowJonesUsdPct / 100) * fx - 1) * 100),
+      ifixPct: r2(idxReturn(benchSymbols.IFIX, month)),
+      usdBrlPct: r2(usdBrlPct),
+      source: 'AUTO',
+      isPartial: month === nowMonth,
+      computedAt,
+    };
+  });
+
+  return { ok: true, computedAt, fromMonth, toMonth: nowMonth, rows };
+}
+
 function sanitizePortfolioState(state) {
   if (!state || typeof state !== 'object') return state;
   const next = { ...state };
@@ -1241,6 +1527,16 @@ export function createApiApp() {
       newCount: detected.filter((d) => !d.alreadyInSheet).length,
       items: detected,
     });
+  });
+
+  // Automatic monthly performance (all months after the last historical row, incl. current month MTD)
+  app.post('/api/monthly-performance', async (req, res) => {
+    try {
+      const result = await computeMonthlyPerformance(req.body || {});
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ ok: false, error: String(err?.message || err) });
+    }
   });
 
   // Full live market sync: fetches FX, Indices, BCB CDI/IPCA, CVM Quotas, Tesouro Direto PU, and portfolio holdings
